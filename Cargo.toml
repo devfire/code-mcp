@@ -1,0 +1,17 @@
+[package]
+name = "code-mcp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rmcp = { version = "0.16.0", features = ["server", "transport-io"] }
+tokio = { version = "1.43", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+schemars = "0.8"
+ignore = "0.4.23"
+regex = "1.11"
+thiserror = "2.0"
+anyhow = "1.0"
+grep-searcher = "0.1.14"
+grep-regex = "0.1.13"
