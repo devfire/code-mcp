@@ -1,4 +1,6 @@
 mod error;
+mod gate;
+mod limiter;
 mod scope;
 mod tools;
 
@@ -23,6 +25,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use crate::gate::{GateCtx, gate};
+use crate::limiter::PeerLimiter;
+
 #[derive(Debug, Parser)]
 #[command(name = "code-mcp", about = "Streamable HTTP MCP server for code search/read tools")]
 struct Args {
@@ -44,6 +49,26 @@ struct Args {
     /// of the project is also rejected.
     #[arg(long, required = true)]
     project: PathBuf,
+
+    /// Hard cap on concurrent stateful sessions. Once reached, new
+    /// initialize POSTs are rejected with 503 + Retry-After until at
+    /// least one session closes. Existing-session traffic is unaffected.
+    #[arg(long, default_value_t = 64)]
+    max_sessions: usize,
+
+    /// Per-peer cap on **new** initialize requests, expressed as a
+    /// per-minute rate (token bucket of capacity = rate, refilling over
+    /// 60s). When exhausted, new initializes from that peer get 429 +
+    /// Retry-After. Existing-session traffic is unaffected.
+    #[arg(long, default_value_t = 12)]
+    initialize_rate_per_min: u32,
+
+    /// Trust the leftmost entry of `X-Forwarded-For` as the peer IP
+    /// instead of the TCP socket address. Only set this if the server
+    /// sits behind a reverse proxy that you control — `X-Forwarded-For`
+    /// is forgeable by any direct client.
+    #[arg(long, default_value_t = false)]
+    trust_forwarded_for: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -398,6 +423,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let memory_dir = args.memory_dir.clone();
     let cancel = CancellationToken::new();
     let session_manager = Arc::new(LocalSessionManager::default());
+    let sessions_for_gate = session_manager.clone();
     let config = StreamableHttpServerConfig {
         sse_keep_alive: Some(Duration::from_secs(15)),
         stateful_mode: true,
@@ -419,8 +445,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config,
     );
 
-    // Wrap the tower service in an axum Router so axum::serve accepts it.
-    let app = axum::Router::new().fallback_service(service);
+    let gate_ctx = Arc::new(GateCtx {
+        sessions: sessions_for_gate,
+        max_sessions: args.max_sessions,
+        limiter: PeerLimiter::per_minute(args.initialize_rate_per_min),
+        trust_forwarded_for: args.trust_forwarded_for,
+    });
+    tracing::info!(
+        max_sessions = args.max_sessions,
+        initialize_rate_per_min = args.initialize_rate_per_min,
+        trust_forwarded_for = args.trust_forwarded_for,
+        "gate configured"
+    );
+
+    // Wrap the tower service in an axum Router and gate new-session POSTs
+    // ahead of it, so misbehaving clients can't pin unbounded session state.
+    let app = axum::Router::new()
+        .fallback_service(service)
+        .layer(axum::middleware::from_fn_with_state(gate_ctx, gate));
 
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
     tracing::info!(addr = %args.bind, "listening");
@@ -434,9 +476,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     };
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await?;
 
     Ok(())
 }

@@ -81,6 +81,9 @@ Flags:
 - `--bind <addr:port>` — default `0.0.0.0:8080`.
 - `--project <path>` — **required**. Every path the tools touch is canonicalized and required to lie within this directory; anything outside is rejected with `invalid_params`. Symlinks in input paths are resolved before the check, so `cat /proj/link-to-etc-passwd` is rejected because its canonical form is `/etc/passwd`. The server refuses to start without it.
 - `--memory-dir <path>` — optional. If set, enables the `memories` tool and reads `<path>/instructions.md` (if present) into the `InitializeResult.instructions` payload sent to the model on connect.
+- `--max-sessions <N>` — default `64`. Hard cap on concurrent stateful sessions in the rmcp `LocalSessionManager`. New initialize POSTs are rejected with `503 Service Unavailable` + `Retry-After: 5` once the cap is met. Existing-session traffic (any POST carrying `Mcp-Session-Id`) passes through untouched.
+- `--initialize-rate-per-min <R>` — default `12`. Per-peer cap on **new** initialize requests, expressed as a per-minute token bucket (capacity = `R`, refilling continuously over 60 s). When exhausted, new initializes from that peer return `429 Too Many Requests` + `Retry-After: <secs>`. A misconfigured client that reconnects in a tight loop gets throttled here instead of pinning unbounded session state. Default `12`/min ≈ one fresh session every 5 s sustained — well above any healthy reconnect rate.
+- `--trust-forwarded-for` — default `false`. When set, the gate uses the leftmost entry of `X-Forwarded-For` as the peer IP for rate-limiting. Only enable when the server sits behind a reverse proxy you control; the header is forgeable by any direct client.
 
 ### Scope semantics
 
@@ -135,7 +138,7 @@ Other MCP clients with streamable-HTTP support (Cursor, Zed, etc.) take similar 
 ## Development
 
 ```sh
-cargo test           # 8 tests covering grep/find/cat semantics
+cargo test           # tools, scope, limiter, and gate-middleware tests
 cargo clippy --all-targets -- -D warnings
 ```
 
