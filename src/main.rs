@@ -64,10 +64,11 @@ struct Args {
     #[arg(long, default_value_t = 12)]
     initialize_rate_per_min: u32,
 
-    /// Trust the leftmost entry of `X-Forwarded-For` as the peer IP
-    /// instead of the TCP socket address. Only set this if the server
-    /// sits behind a reverse proxy that you control — `X-Forwarded-For`
-    /// is forgeable by any direct client.
+    /// Trust the rightmost entry of `X-Forwarded-For` as the peer IP
+    /// instead of the TCP socket address. Assumes a single trusted proxy
+    /// hop (e.g. AWS ALB) that appends the real client IP. Only set this
+    /// if the server sits behind a reverse proxy that you control —
+    /// entries to the left of the last hop are client-supplied and forgeable.
     #[arg(long, default_value_t = false)]
     trust_forwarded_for: bool,
 

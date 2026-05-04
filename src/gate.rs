@@ -92,10 +92,11 @@ fn peer_ip(headers: &HeaderMap, addr: SocketAddr, trust_xff: bool) -> IpAddr {
         && let Some(ip) = headers
             .get("x-forwarded-for")
             .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.split(',').next())
+            .and_then(|s| s.rsplit(',').next())
             .map(str::trim)
             .and_then(|s| s.parse::<IpAddr>().ok())
     {
+        tracing::info!(peer = %ip, socket = %addr.ip(), "resolved peer IP from X-Forwarded-For");
         return ip;
     }
     addr.ip()
@@ -217,11 +218,14 @@ mod tests {
     }
 
     #[test]
-    fn peer_ip_uses_xff_first_hop_when_trusted() {
+    fn peer_ip_uses_xff_last_hop_when_trusted() {
+        // Behind AWS ALB the trusted proxy appends the real client IP at the
+        // rightmost position; everything to its left is client-supplied and
+        // forgeable.
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "1.2.3.4, 5.6.7.8".parse().unwrap());
         let addr: SocketAddr = "10.0.0.5:1234".parse().unwrap();
-        assert_eq!(peer_ip(&h, addr, true), IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)));
+        assert_eq!(peer_ip(&h, addr, true), IpAddr::V4(Ipv4Addr::new(5, 6, 7, 8)));
     }
 
     #[test]
