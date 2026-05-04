@@ -5,7 +5,7 @@ A streamable-HTTP MCP server that exposes fast filesystem search and read tools 
 The point: Claude Code's local MCP support is stdio-only. This server speaks streamable HTTP so a single instance running on a dev box can be reached over the LAN by Claude Code, Cursor, Zed, or any other MCP client that supports HTTP transport.
 
 > [!WARNING]
-> No authentication. **Run this on a private LAN only.** Anyone who can reach the bind address can use the tools. Use `--project` to scope what they can read.
+> No authentication. **Run this on a private LAN only.** Anyone who can reach the bind address can use the tools. `--project` scopes what they can read.
 
 ## Tools
 
@@ -73,13 +73,13 @@ Use `offset` to page: if the response ends with `[truncated: line cap]`, call ag
 
 ```sh
 cargo build --release
-./target/release/code-mcp --bind 0.0.0.0:8080
+./target/release/code-mcp --bind 0.0.0.0:8080 --project ./my/repo
 ```
 
 Flags:
 
 - `--bind <addr:port>` — default `0.0.0.0:8080`.
-- `--project <path>` — optional. When set, every path the tools touch is canonicalized and required to lie within this directory; anything outside is rejected with `invalid_params`. Symlinks in input paths are resolved before the check, so `cat /proj/link-to-etc-passwd` is rejected because its canonical form is `/etc/passwd`. **Strongly recommended for any deployment.**
+- `--project <path>` — **required**. Every path the tools touch is canonicalized and required to lie within this directory; anything outside is rejected with `invalid_params`. Symlinks in input paths are resolved before the check, so `cat /proj/link-to-etc-passwd` is rejected because its canonical form is `/etc/passwd`. The server refuses to start without it.
 - `--memory-dir <path>` — optional. If set, enables the `memories` tool and reads `<path>/instructions.md` (if present) into the `InitializeResult.instructions` payload sent to the model on connect.
 
 ### Scope semantics
@@ -91,8 +91,6 @@ With `--project ./my/repo` set:
 - ❌ `cat /etc/passwd` — outside the root, rejected
 - ❌ `cat ./my/repo/../../etc/passwd` — canonicalizes to `/etc/passwd`, rejected
 - ❌ `cat ./my/repo/link-to-secret` (symlink to `/etc/passwd`) — symlink resolves outside root, rejected
-
-Without `--project`, no scope is enforced and tools can read any path the server process can access. The server logs a warning at startup when no scope is set.
 
 The `--memory-dir` is **not** required to be inside `--project` — it's server-side config, not user-driven file access.
 

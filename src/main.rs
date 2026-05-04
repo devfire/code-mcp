@@ -37,13 +37,13 @@ struct Args {
     #[arg(long)]
     memory_dir: Option<PathBuf>,
 
-    /// Optional project root. When set, every path the tools touch
-    /// (grep/find directory, cat file_path) is canonicalized and must
-    /// be within this directory; anything outside is rejected. Symlinks
-    /// in input paths are resolved before the check, so a symlink
-    /// pointing out of the project is also rejected.
-    #[arg(long)]
-    project: Option<PathBuf>,
+    /// Required project root. Every path the tools touch (grep/find
+    /// directory, cat file_path) is canonicalized and must be within
+    /// this directory; anything outside is rejected. Symlinks in input
+    /// paths are resolved before the check, so a symlink pointing out
+    /// of the project is also rejected.
+    #[arg(long, required = true)]
+    project: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -310,18 +310,12 @@ impl ServerHandler for CodeMcpServer {
         let mut instructions = String::from(
             "code-mcp: filesystem search and read tools.\n\n",
         );
-        match self.scope.root() {
-            Some(root) => instructions.push_str(&format!(
-                "All paths are scoped to the project root: {}. \
+        instructions.push_str(&format!(
+            "All paths are scoped to the project root: {}. \
 Paths outside this directory (or symlinks resolving outside it) are rejected \
 with `invalid_params`.\n\n",
-                root.display()
-            )),
-            None => instructions.push_str(
-                "No project scope is configured. Tools can read any file the \
-server process has access to. (Intended for trusted, private-LAN deployment.)\n\n",
-            ),
-        }
+            self.scope.root().display()
+        ));
         instructions.push_str(
             "\
 Regex flavor: Rust `regex` crate. No lookaround or backreferences. \
@@ -399,11 +393,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     let scope = Scope::new(args.project.clone())?;
-    if let Some(root) = scope.root() {
-        tracing::info!(root = %root.display(), "project scope active");
-    } else {
-        tracing::warn!("no --project set; tools can read any path the server can access");
-    }
+    tracing::info!(root = %scope.root().display(), "project scope active");
 
     let memory_dir = args.memory_dir.clone();
     let cancel = CancellationToken::new();
