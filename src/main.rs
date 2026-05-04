@@ -72,6 +72,22 @@ struct Args {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum StringOrVec {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl StringOrVec {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            StringOrVec::One(s) => vec![s],
+            StringOrVec::Many(v) => v,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct GrepArgs {
     #[schemars(description = "Directory to search in")]
     directory: String,
@@ -91,8 +107,8 @@ struct GrepArgs {
     follow_symlinks: Option<bool>,
     #[schemars(description = "Respect .gitignore files (default true)")]
     respect_gitignore: Option<bool>,
-    #[schemars(description = "Restrict to files with these extensions (e.g. [\"rs\", \"toml\"]). Empty means all files.")]
-    file_extensions: Option<Vec<String>>,
+    #[schemars(description = "Restrict to files with these extensions. Accepts either a single string (\"sql\") or an array ([\"rs\", \"toml\"]). Empty means all files.")]
+    file_extensions: Option<StringOrVec>,
     #[schemars(description = "Hard cap on total response size in bytes (default ~5 MiB). Truncates with a marker.")]
     max_bytes: Option<usize>,
 }
@@ -173,7 +189,10 @@ impl CodeMcpServer {
                 include_hidden: args.include_hidden.unwrap_or(false),
                 follow_symlinks: args.follow_symlinks.unwrap_or(false),
                 respect_gitignore: args.respect_gitignore.unwrap_or(true),
-                file_extensions: args.file_extensions.unwrap_or_default(),
+                file_extensions: args
+                    .file_extensions
+                    .map(StringOrVec::into_vec)
+                    .unwrap_or_default(),
                 max_bytes: args.max_bytes,
             };
             tools::grep(&directory.to_string_lossy(), &args.pattern, opts)
@@ -554,5 +573,23 @@ mod tests {
             Err(error::AppError::NotFound(_)) => Ok(()),
             other => Err(format!("expected NotFound, got {:?}", other).into()),
         }
+    }
+
+    #[test]
+    fn grep_args_accepts_file_extensions_as_string() -> TestResult {
+        let json = r#"{"directory":"/tmp","pattern":"x","file_extensions":"sql"}"#;
+        let args: GrepArgs = serde_json::from_str(json)?;
+        let v = args.file_extensions.unwrap().into_vec();
+        assert_eq!(v, vec!["sql".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn grep_args_accepts_file_extensions_as_array() -> TestResult {
+        let json = r#"{"directory":"/tmp","pattern":"x","file_extensions":["rs","toml"]}"#;
+        let args: GrepArgs = serde_json::from_str(json)?;
+        let v = args.file_extensions.unwrap().into_vec();
+        assert_eq!(v, vec!["rs".to_string(), "toml".to_string()]);
+        Ok(())
     }
 }
