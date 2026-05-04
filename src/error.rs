@@ -24,6 +24,9 @@ pub enum AppError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Out of project scope: {0}")]
+    OutOfScope(String),
 }
 
 impl From<AppError> for ErrorData {
@@ -32,7 +35,8 @@ impl From<AppError> for ErrorData {
             AppError::Regex(_)
             | AppError::GrepRegex(_)
             | AppError::InvalidRequest(_)
-            | AppError::NotFound(_) => ErrorData::invalid_params(
+            | AppError::NotFound(_)
+            | AppError::OutOfScope(_) => ErrorData::invalid_params(
                 "invalid_params",
                 Some(json!({"error": err.to_string()})),
             ),

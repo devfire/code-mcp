@@ -5,7 +5,7 @@ A streamable-HTTP MCP server that exposes fast filesystem search and read tools 
 The point: Claude Code's local MCP support is stdio-only. This server speaks streamable HTTP so a single instance running on a dev box can be reached over the LAN by Claude Code, Cursor, Zed, or any other MCP client that supports HTTP transport.
 
 > [!WARNING]
-> No authentication. No path sandboxing. **Run this on a private LAN only.** Anyone who can reach the bind address can read any file the server process can read.
+> No authentication. **Run this on a private LAN only.** Anyone who can reach the bind address can use the tools. Use `--project` to scope what they can read.
 
 ## Tools
 
@@ -79,7 +79,22 @@ cargo build --release
 Flags:
 
 - `--bind <addr:port>` — default `0.0.0.0:8080`.
+- `--project <path>` — optional. When set, every path the tools touch is canonicalized and required to lie within this directory; anything outside is rejected with `invalid_params`. Symlinks in input paths are resolved before the check, so `cat /proj/link-to-etc-passwd` is rejected because its canonical form is `/etc/passwd`. **Strongly recommended for any deployment.**
 - `--memory-dir <path>` — optional. If set, enables the `memories` tool and reads `<path>/instructions.md` (if present) into the `InitializeResult.instructions` payload sent to the model on connect.
+
+### Scope semantics
+
+With `--project ./my/repo` set:
+
+- ✅ `cat ./my/repo/src/main.rs` — inside the root, allowed
+- ✅ `grep ./my/repo --pattern foo` — directory inside the root, allowed
+- ❌ `cat /etc/passwd` — outside the root, rejected
+- ❌ `cat ./my/repo/../../etc/passwd` — canonicalizes to `/etc/passwd`, rejected
+- ❌ `cat ./my/repo/link-to-secret` (symlink to `/etc/passwd`) — symlink resolves outside root, rejected
+
+Without `--project`, no scope is enforced and tools can read any path the server process can access. The server logs a warning at startup when no scope is set.
+
+The `--memory-dir` is **not** required to be inside `--project` — it's server-side config, not user-driven file access.
 
 ### Memory dir layout
 
@@ -128,7 +143,7 @@ cargo clippy --all-targets -- -D warnings
 
 ## Notes & non-goals
 
-- **No auth, no sandbox** — by design (LAN deployment). If you need either, fork it.
+- **No auth** — by design (LAN deployment). For path scoping, use `--project`.
 - The `regex` crate has no lookaround or backreferences. Patterns that need them won't compile and you'll get an `invalid_params` MCP error.
 - `.gitignore` is honored only inside a directory tree that contains a `.git/` directory (this is `ignore` crate behavior, not ours).
 - Each parallel-walker worker keeps a thread-local `String` buffer and ships it to the main thread via `mpsc`; counter is `AtomicUsize` with `fetch_add`-based exact capping. There is no `Arc<Mutex<...>>` on the hot path.

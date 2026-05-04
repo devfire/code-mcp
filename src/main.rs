@@ -1,5 +1,8 @@
 mod error;
+mod scope;
 mod tools;
+
+use scope::Scope;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -33,6 +36,14 @@ struct Args {
     ///   * The `memories` tool reads from this directory.
     #[arg(long)]
     memory_dir: Option<PathBuf>,
+
+    /// Optional project root. When set, every path the tools touch
+    /// (grep/find directory, cat file_path) is canonicalized and must
+    /// be within this directory; anything outside is rejected. Symlinks
+    /// in input paths are resolved before the check, so a symlink
+    /// pointing out of the project is also rejected.
+    #[arg(long)]
+    project: Option<PathBuf>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -100,14 +111,20 @@ struct CodeMcpServer {
     tool_router: rmcp::handler::server::router::tool::ToolRouter<Self>,
     memory_dir: Option<PathBuf>,
     extra_instructions: Option<String>,
+    scope: Scope,
 }
 
 impl CodeMcpServer {
-    fn new(memory_dir: Option<PathBuf>, extra_instructions: Option<String>) -> Self {
+    fn new(
+        memory_dir: Option<PathBuf>,
+        extra_instructions: Option<String>,
+        scope: Scope,
+    ) -> Self {
         Self {
             tool_router: Self::tool_router(),
             memory_dir,
             extra_instructions,
+            scope,
         }
     }
 }
@@ -121,6 +138,7 @@ impl CodeMcpServer {
         &self,
         Parameters(args): Parameters<GrepArgs>,
     ) -> Result<String, rmcp::ErrorData> {
+        let directory = self.scope.check(&args.directory)?;
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::GrepOptions {
                 before_context: args.before_context.unwrap_or(0),
@@ -133,7 +151,7 @@ impl CodeMcpServer {
                 file_extensions: args.file_extensions.unwrap_or_default(),
                 max_bytes: args.max_bytes,
             };
-            tools::grep(&args.directory, &args.pattern, opts)
+            tools::grep(&directory.to_string_lossy(), &args.pattern, opts)
         })
         .await
         .map_err(|e| {
@@ -153,6 +171,7 @@ impl CodeMcpServer {
         &self,
         Parameters(args): Parameters<FindArgs>,
     ) -> Result<String, rmcp::ErrorData> {
+        let directory = self.scope.check(&args.directory)?;
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::FindOptions {
                 max_results: args.max_results,
@@ -160,7 +179,7 @@ impl CodeMcpServer {
                 respect_gitignore: args.respect_gitignore.unwrap_or(true),
                 match_basename: args.match_basename.unwrap_or(true),
             };
-            tools::find(&args.directory, &args.pattern, opts)
+            tools::find(&directory.to_string_lossy(), &args.pattern, opts)
         })
         .await
         .map_err(|e| {
@@ -177,9 +196,10 @@ impl CodeMcpServer {
         description = "Read file contents. Use offset to paginate long files; max_lines / max_bytes cap the response size."
     )]
     async fn cat(&self, Parameters(args): Parameters<CatArgs>) -> Result<String, rmcp::ErrorData> {
+        let file_path = self.scope.check(&args.file_path)?;
         let res = tokio::task::spawn_blocking(move || {
             tools::cat(
-                &args.file_path,
+                &file_path.to_string_lossy(),
                 args.offset.unwrap_or(0),
                 args.max_lines,
                 args.max_bytes,
@@ -288,12 +308,22 @@ or create a `MEMORY.md` index at the top level.\n",
 impl ServerHandler for CodeMcpServer {
     fn get_info(&self) -> rmcp::model::InitializeResult {
         let mut instructions = String::from(
+            "code-mcp: filesystem search and read tools.\n\n",
+        );
+        match self.scope.root() {
+            Some(root) => instructions.push_str(&format!(
+                "All paths are scoped to the project root: {}. \
+Paths outside this directory (or symlinks resolving outside it) are rejected \
+with `invalid_params`.\n\n",
+                root.display()
+            )),
+            None => instructions.push_str(
+                "No project scope is configured. Tools can read any file the \
+server process has access to. (Intended for trusted, private-LAN deployment.)\n\n",
+            ),
+        }
+        instructions.push_str(
             "\
-code-mcp: filesystem search and read tools.
-
-Tools work on the host filesystem of this server. No path restrictions are enforced \
-(intended for trusted, private-LAN deployment).
-
 Regex flavor: Rust `regex` crate. No lookaround or backreferences. \
 Use the inline flag (?i) at the start of a pattern for case-insensitive matching, \
 or pass case_insensitive: true to grep.
@@ -368,6 +398,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         None
     };
 
+    let scope = Scope::new(args.project.clone())?;
+    if let Some(root) = scope.root() {
+        tracing::info!(root = %root.display(), "project scope active");
+    } else {
+        tracing::warn!("no --project set; tools can read any path the server can access");
+    }
+
     let memory_dir = args.memory_dir.clone();
     let cancel = CancellationToken::new();
     let session_manager = Arc::new(LocalSessionManager::default());
@@ -381,7 +418,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         ..Default::default()
     };
     let service = StreamableHttpService::new(
-        move || Ok(CodeMcpServer::new(memory_dir.clone(), extra_instructions.clone())),
+        move || {
+            Ok(CodeMcpServer::new(
+                memory_dir.clone(),
+                extra_instructions.clone(),
+                scope.clone(),
+            ))
+        },
         session_manager,
         config,
     );
