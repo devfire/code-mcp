@@ -1,6 +1,7 @@
 mod error;
 mod gate;
 mod limiter;
+mod reaper;
 mod scope;
 mod tools;
 
@@ -69,6 +70,17 @@ struct Args {
     /// is forgeable by any direct client.
     #[arg(long, default_value_t = false)]
     trust_forwarded_for: bool,
+
+    /// Idle timeout (seconds) for stateful sessions. Sessions whose last
+    /// observed request is older than this are closed by the reaper, so
+    /// abandoned clients (process killed, network gone, no DELETE sent)
+    /// don't pin slots against `--max-sessions` indefinitely.
+    #[arg(long, default_value_t = 1800)]
+    session_idle_timeout_secs: u64,
+
+    /// How often (seconds) the reaper sweeps for idle sessions.
+    #[arg(long, default_value_t = 60)]
+    session_sweep_interval_secs: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -443,6 +455,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cancel = CancellationToken::new();
     let session_manager = Arc::new(LocalSessionManager::default());
     let sessions_for_gate = session_manager.clone();
+    let sessions_for_reaper = session_manager.clone();
+    let activity = Arc::new(reaper::ActivityTracker::new());
+    let activity_for_reaper = activity.clone();
     let config = StreamableHttpServerConfig {
         sse_keep_alive: Some(Duration::from_secs(15)),
         stateful_mode: true,
@@ -469,13 +484,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         max_sessions: args.max_sessions,
         limiter: PeerLimiter::per_minute(args.initialize_rate_per_min),
         trust_forwarded_for: args.trust_forwarded_for,
+        activity,
     });
     tracing::info!(
         max_sessions = args.max_sessions,
         initialize_rate_per_min = args.initialize_rate_per_min,
         trust_forwarded_for = args.trust_forwarded_for,
+        session_idle_timeout_secs = args.session_idle_timeout_secs,
+        session_sweep_interval_secs = args.session_sweep_interval_secs,
         "gate configured"
     );
+
+    tokio::spawn(reaper::reap_loop(
+        sessions_for_reaper,
+        activity_for_reaper,
+        Duration::from_secs(args.session_idle_timeout_secs),
+        Duration::from_secs(args.session_sweep_interval_secs),
+        cancel.clone(),
+    ));
 
     // Wrap the tower service in an axum Router and gate new-session POSTs
     // ahead of it, so misbehaving clients can't pin unbounded session state.

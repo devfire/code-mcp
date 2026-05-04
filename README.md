@@ -84,6 +84,8 @@ Flags:
 - `--max-sessions <N>` — default `64`. Hard cap on concurrent stateful sessions in the rmcp `LocalSessionManager`. New initialize POSTs are rejected with `503 Service Unavailable` + `Retry-After: 5` once the cap is met. Existing-session traffic (any POST carrying `Mcp-Session-Id`) passes through untouched.
 - `--initialize-rate-per-min <R>` — default `12`. Per-peer cap on **new** initialize requests, expressed as a per-minute token bucket (capacity = `R`, refilling continuously over 60 s). When exhausted, new initializes from that peer return `429 Too Many Requests` + `Retry-After: <secs>`. A misconfigured client that reconnects in a tight loop gets throttled here instead of pinning unbounded session state. Default `12`/min ≈ one fresh session every 5 s sustained — well above any healthy reconnect rate.
 - `--trust-forwarded-for` — default `false`. When set, the gate uses the leftmost entry of `X-Forwarded-For` as the peer IP for rate-limiting. Only enable when the server sits behind a reverse proxy you control; the header is forgeable by any direct client.
+- `--session-idle-timeout-secs <N>` — default `1800` (30 min). Idle timeout for stateful sessions. A background reaper task closes any session whose last observed request is older than this, so abandoned clients (process killed, network gone, no DELETE sent) don't pin slots against `--max-sessions` indefinitely. The cap defends against bursts; the reaper handles long-lived zombies.
+- `--session-sweep-interval-secs <N>` — default `60`. How often the reaper sweeps for idle sessions.
 
 ### Scope semantics
 

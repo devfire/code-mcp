@@ -6,9 +6,12 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::streamable_http_server::session::{
+    SessionId, local::LocalSessionManager,
+};
 
 use crate::limiter::PeerLimiter;
+use crate::reaper::ActivityTracker;
 
 /// Header name (case-insensitive) carrying the MCP session id.
 /// rmcp defines this internally; we use the literal to avoid coupling
@@ -21,6 +24,7 @@ pub struct GateCtx {
     pub max_sessions: usize,
     pub limiter: PeerLimiter,
     pub trust_forwarded_for: bool,
+    pub activity: Arc<ActivityTracker>,
 }
 
 /// axum middleware that gates **new-session** POSTs (no `Mcp-Session-Id`
@@ -36,7 +40,11 @@ pub async fn gate(
     req: Request<Body>,
     next: Next,
 ) -> Response {
-    if req.method() != Method::POST || req.headers().contains_key(SESSION_ID_HEADER) {
+    if let Some(id) = session_id_from_headers(req.headers()) {
+        ctx.activity.touch(id).await;
+        return next.run(req).await;
+    }
+    if req.method() != Method::POST {
         return next.run(req).await;
     }
 
@@ -70,6 +78,13 @@ pub async fn gate(
     }
 
     next.run(req).await
+}
+
+fn session_id_from_headers(headers: &HeaderMap) -> Option<SessionId> {
+    headers
+        .get(SESSION_ID_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(SessionId::from)
 }
 
 fn peer_ip(headers: &HeaderMap, addr: SocketAddr, trust_xff: bool) -> IpAddr {
@@ -125,6 +140,7 @@ mod tests {
             max_sessions: 0, // would block POSTs
             limiter: PeerLimiter::per_minute(1),
             trust_forwarded_for: false,
+            activity: Arc::new(ActivityTracker::new()),
         });
         let app = build_app(ctx);
         let res = app.oneshot(req(Method::GET, dummy_addr(), false)).await.unwrap();
@@ -139,6 +155,7 @@ mod tests {
             max_sessions: 0,
             limiter: PeerLimiter::per_minute(1),
             trust_forwarded_for: false,
+            activity: Arc::new(ActivityTracker::new()),
         });
         let app = build_app(ctx);
         let res = app.oneshot(req(Method::POST, dummy_addr(), true)).await.unwrap();
@@ -152,6 +169,7 @@ mod tests {
             max_sessions: 0,
             limiter: PeerLimiter::per_minute(100),
             trust_forwarded_for: false,
+            activity: Arc::new(ActivityTracker::new()),
         });
         let app = build_app(ctx);
         let res = app.oneshot(req(Method::POST, dummy_addr(), false)).await.unwrap();
@@ -166,6 +184,7 @@ mod tests {
             max_sessions: 1000,
             limiter: PeerLimiter::new(2.0, 0.001, 1024), // ~no refill
             trust_forwarded_for: false,
+            activity: Arc::new(ActivityTracker::new()),
         });
         let app = build_app(ctx);
 
