@@ -1,0 +1,134 @@
+# code-mcp
+
+A streamable-HTTP MCP server that exposes fast filesystem search and read tools (`grep`, `find`, `cat`) to LLM clients.
+
+The point: Claude Code's local MCP support is stdio-only. This server speaks streamable HTTP so a single instance running on a dev box can be reached over the LAN by Claude Code, Cursor, Zed, or any other MCP client that supports HTTP transport.
+
+> [!WARNING]
+> No authentication. No path sandboxing. **Run this on a private LAN only.** Anyone who can reach the bind address can read any file the server process can read.
+
+## Tools
+
+### `grep`
+Regex search across files using parallel directory traversal (`ignore` + `grep-searcher`).
+
+| arg                  | type            | default | notes                                                       |
+| -------------------- | --------------- | ------- | ----------------------------------------------------------- |
+| `directory`          | `string`        | —       | required                                                    |
+| `pattern`            | `string`        | —       | required; Rust `regex` flavor — no lookaround/backrefs      |
+| `before_context`     | `int`           | `0`     |                                                             |
+| `after_context`      | `int`           | `0`     |                                                             |
+| `max_results`        | `int`           | `100`   | exact cap (no over-shoot)                                   |
+| `case_insensitive`   | `bool`          | `false` | equivalent to `(?i)` prefix in `pattern`                    |
+| `include_hidden`     | `bool`          | `false` |                                                             |
+| `follow_symlinks`    | `bool`          | `false` |                                                             |
+| `respect_gitignore`  | `bool`          | `true`  |                                                             |
+| `file_extensions`    | `string[]`      | `[]`    | e.g. `["rs", "toml"]`; empty = all                          |
+| `max_bytes`          | `int`           | ~5 MiB  | hard cap on response size; appends `[truncated: byte cap]`  |
+
+Walker errors and search errors are tallied and reported as a `[notice: N entry errors, M search errors; first: ...]` footer rather than silently dropped.
+
+### `find`
+Find files by regex.
+
+| arg                 | type     | default | notes                                                |
+| ------------------- | -------- | ------- | ---------------------------------------------------- |
+| `directory`         | `string` | —       | required                                             |
+| `pattern`           | `string` | —       | required                                             |
+| `max_results`       | `int`    | `100`   |                                                      |
+| `include_hidden`    | `bool`   | `false` |                                                      |
+| `respect_gitignore` | `bool`   | `true`  |                                                      |
+| `match_basename`    | `bool`   | `true`  | when `false`, the regex matches the full path        |
+
+### `memories`
+Load persisted context (conventions, project facts, prior feedback) for this server. Available only when `--memory-dir` was set at startup; otherwise returns an `invalid_params` error.
+
+| arg    | type     | default | notes                                                                       |
+| ------ | -------- | ------- | --------------------------------------------------------------------------- |
+| `name` | `string` | —       | Optional filename within the memory dir (e.g. `user_role.md`). Plain basename only — `..`, `/`, `\` are rejected. |
+
+Without `name`: returns the contents of `<memory-dir>/MEMORY.md` if present, otherwise a listing of `*.md` files in the dir. Re-reads on every call, so edits made on disk are picked up live.
+
+The model is told about this tool via `InitializeResult.instructions` whenever the server is launched with `--memory-dir`. The expected pattern is:
+
+1. On session start, the model calls `memories` with no args → gets the index.
+2. The index points to specific memory files via `cat`-able paths or names.
+3. The model loads what's relevant via `cat` (or another `memories(name=...)` call).
+
+This mirrors Claude Code's auto-memory pattern.
+
+### `cat`
+Read file contents with pagination.
+
+| arg         | type     | default | notes                                                                |
+| ----------- | -------- | ------- | -------------------------------------------------------------------- |
+| `file_path` | `string` | —       | required                                                             |
+| `offset`    | `int`    | `0`     | 0-based line number to start from                                    |
+| `max_lines` | `int`    | `2000`  | appends `[truncated: line cap]` if more lines remain                 |
+| `max_bytes` | `int`    | ~5 MiB  | appends `[truncated: byte cap]` if hit mid-line (UTF-8-safe cut)     |
+
+Use `offset` to page: if the response ends with `[truncated: line cap]`, call again with `offset = previous_offset + max_lines`.
+
+## Build & run
+
+```sh
+cargo build --release
+./target/release/code-mcp --bind 0.0.0.0:8080
+```
+
+Flags:
+
+- `--bind <addr:port>` — default `0.0.0.0:8080`.
+- `--memory-dir <path>` — optional. If set, enables the `memories` tool and reads `<path>/instructions.md` (if present) into the `InitializeResult.instructions` payload sent to the model on connect.
+
+### Memory dir layout
+
+```
+<memory-dir>/
+├── instructions.md     # appended to InitializeResult.instructions on connect
+├── MEMORY.md           # returned by memories() with no args
+├── user_role.md        # returned by memories(name="user_role.md")
+├── feedback_testing.md
+└── project_status.md
+```
+
+The `instructions.md` file is read once at startup. The other files are read on demand by the `memories` and `cat` tools, so editing them does not require a restart.
+
+Logging via `RUST_LOG`:
+
+```sh
+RUST_LOG=debug,rmcp=info ./target/release/code-mcp
+```
+
+Default level is `info,rmcp=info`. Press Ctrl-C for graceful shutdown (cancels the rmcp `CancellationToken`, drains active sessions).
+
+## Connecting from Claude Code
+
+Add to `~/.claude.json` (or use `claude mcp add`):
+
+```json
+{
+  "mcpServers": {
+    "code-mcp": {
+      "type": "http",
+      "url": "http://your-dev-box.lan:8080/"
+    }
+  }
+}
+```
+
+Other MCP clients with streamable-HTTP support (Cursor, Zed, etc.) take similar config.
+
+## Development
+
+```sh
+cargo test           # 8 tests covering grep/find/cat semantics
+cargo clippy --all-targets -- -D warnings
+```
+
+## Notes & non-goals
+
+- **No auth, no sandbox** — by design (LAN deployment). If you need either, fork it.
+- The `regex` crate has no lookaround or backreferences. Patterns that need them won't compile and you'll get an `invalid_params` MCP error.
+- `.gitignore` is honored only inside a directory tree that contains a `.git/` directory (this is `ignore` crate behavior, not ours).
+- Each parallel-walker worker keeps a thread-local `String` buffer and ships it to the main thread via `mpsc`; counter is `AtomicUsize` with `fetch_add`-based exact capping. There is no `Arc<Mutex<...>>` on the hot path.
