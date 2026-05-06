@@ -5,7 +5,8 @@ A streamable-HTTP MCP server that exposes fast filesystem search and read tools 
 The point: Claude Code's local MCP support is stdio-only. This server speaks streamable HTTP so a single instance running on a dev box can be reached over the LAN by Claude Code, Cursor, Zed, or any other MCP client that supports HTTP transport.
 
 > [!WARNING]
-> No authentication. **Run this on a private LAN only.** Anyone who can reach the bind address can use the tools. `--project` scopes what they can read.
+> Authentication & Authorization are outside the scope of this project. **Run this on a private LAN only.** Anyone who can reach the bind address can use the tools. `--project` scopes what they can read. Run this with `chroot` for extra jailing.
+> NOTE: https://modelcontextprotocol.io/docs/tutorials/security/authorization is what you should be using regardless.
 
 ## Tools
 
