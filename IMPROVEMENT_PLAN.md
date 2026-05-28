@@ -13,14 +13,14 @@ impl, and the `main` entry point. This violates the "main should just wire thing
 together" principle.
 
 **Actions:**
-- [ ] Move `GrepArgs`, `FindArgs`, `CatArgs`, `MemoriesArgs`, and `StringOrVec` into
+- [x] Move `GrepArgs`, `FindArgs`, `CatArgs`, `MemoriesArgs`, and `StringOrVec` into
       `src/tools.rs` (or a new `src/args.rs`). They are data types for the tools layer,
       not server infrastructure.
-- [ ] Move `load_memory` into a new `src/memory.rs` module. It has zero coupling to the
+- [x] Move `load_memory` into a new `src/memory.rs` module. It has zero coupling to the
       server struct beyond `self.memory_dir`.
-- [ ] Move `CodeMcpServer` + its `#[tool_router]` and `#[tool_handler]` impls into
+- [x] Move `CodeMcpServer` + its `#[tool_router]` and `#[tool_handler]` impls into
       `src/server.rs`. Keep `main.rs` to arg parsing, wiring, and `tokio::spawn`.
-- [ ] Result: `main.rs` becomes ~80–100 lines of pure orchestration.
+- [x] Result: `main.rs` becomes ~80–100 lines of pure orchestration.
 
 ---
 
@@ -34,13 +34,13 @@ together" principle.
     that literal text.
 
 **Actions:**
-- [ ] Define a `ToolResponse` struct with fields like `content: String`,
+- [x] Define a `ToolResponse` struct with fields like `content: String`,
       `truncated: bool`, `truncation_reason: Option<String>`,
       `match_count: Option<usize>`, `error_count: Option<usize>`.
-- [ ] Derive `Serialize` on it so it serializes as JSON — MCP tools can return
+- [x] Derive `Serialize` on it so it serializes as JSON — MCP tools can return
       content blocks, not just plain text.
-- [ ] Update `grep`/`find`/`cat` to return `ToolResponse` instead of `String`.
-- [ ] Remove the `... [truncated]` and `[notice: …]` string hacks from `tools.rs`.
+- [x] Update `grep`/`find`/`cat` to return `ToolResponse` instead of `String`.
+- [x] Remove the `... [truncated]` and `[notice: …]` string hacks from `tools.rs`.
 
 ---
 

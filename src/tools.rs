@@ -5,6 +5,9 @@ use grep_searcher::{
 };
 use ignore::{WalkBuilder, WalkState};
 use regex::Regex;
+use rmcp::model::CallToolResult;
+use serde::Serialize;
+use serde_json::json;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::mem;
@@ -16,6 +19,55 @@ use std::sync::{Arc, Mutex};
 const DEFAULT_MAX_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
 const DEFAULT_MAX_LINES: usize = 2000;
 const DEFAULT_MAX_RESULTS: usize = 100;
+
+// ---------------------------------------------------------------------------
+// ToolResponse — structured output for all tools
+// ---------------------------------------------------------------------------
+
+/// Structured metadata returned alongside the text content of every tool call.
+///
+/// Serialized as the `structured_content` field of an MCP `CallToolResult`, so
+/// clients can programmatically detect truncation, match counts, and errors
+/// without parsing the text output.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ToolResponse {
+    /// The text content of the tool result.
+    pub content: String,
+    /// Whether the output was truncated due to a size cap.
+    pub truncated: bool,
+    /// If truncated, the reason (e.g. "byte_cap", "line_cap").
+    pub truncation_reason: Option<String>,
+    /// Number of matches found (grep / find).
+    pub match_count: Option<usize>,
+    /// Number of walker entry errors encountered.
+    pub entry_error_count: Option<usize>,
+    /// Number of search errors encountered (grep only).
+    pub search_error_count: Option<usize>,
+    /// First error message, if any errors occurred.
+    pub first_error: Option<String>,
+}
+
+impl ToolResponse {
+    /// Build a `CallToolResult` from this response: text content goes into
+    /// `content`, and the structured metadata goes into `structured_content`.
+    pub fn into_call_tool_result(self) -> CallToolResult {
+        let structured = json!({
+            "truncated": self.truncated,
+            "truncation_reason": self.truncation_reason,
+            "match_count": self.match_count,
+            "entry_error_count": self.entry_error_count,
+            "search_error_count": self.search_error_count,
+            "first_error": self.first_error,
+        });
+        CallToolResult {
+            content: vec![rmcp::model::Content::text(self.content)],
+            structured_content: Some(structured),
+            is_error: Some(false),
+            meta: None,
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -152,31 +204,6 @@ fn record_first(slot: &Mutex<Option<String>>, msg: String) {
     }
 }
 
-fn append_notice(
-    output: &mut String,
-    entry_errors: usize,
-    search_errors: usize,
-    first_entry: &Mutex<Option<String>>,
-    first_search: &Mutex<Option<String>>,
-) {
-    if entry_errors == 0 && search_errors == 0 {
-        return;
-    }
-    let first = first_entry
-        .lock()
-        .ok()
-        .and_then(|g| g.clone())
-        .or_else(|| first_search.lock().ok().and_then(|g| g.clone()))
-        .unwrap_or_else(|| "<unknown>".to_string());
-    if !output.is_empty() && !output.ends_with('\n') {
-        output.push('\n');
-    }
-    output.push_str(&format!(
-        "\n[notice: {} entry errors, {} search errors; first: {}]\n",
-        entry_errors, search_errors, first
-    ));
-}
-
 // ---------------------------------------------------------------------------
 // grep
 // ---------------------------------------------------------------------------
@@ -185,7 +212,7 @@ pub fn grep(
     directory: &str,
     pattern: &str,
     opts: GrepOptions,
-) -> Result<String, AppError> {
+) -> Result<ToolResponse, AppError> {
     let matcher: RegexMatcher = RegexMatcherBuilder::new()
         .case_insensitive(opts.case_insensitive)
         .build(pattern)?;
@@ -313,7 +340,6 @@ pub fn grep(
             if !output.ends_with('\n') {
                 output.push('\n');
             }
-            output.push_str("... [truncated: byte cap]\n");
             byte_cap_hit = true;
         } else {
             output.push_str(&chunk);
@@ -322,19 +348,27 @@ pub fn grep(
 
     let entry_err_n = entry_errors.load(Ordering::Relaxed);
     let search_err_n = search_errors.load(Ordering::Relaxed);
-    append_notice(
-        &mut output,
-        entry_err_n,
-        search_err_n,
-        &first_entry_err,
-        &first_search_err,
-    );
+    let first_error = first_entry_err
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .or_else(|| first_search_err.lock().ok().and_then(|g| g.clone()));
 
-    if output.is_empty() {
-        Ok("No matches found.".to_string())
-    } else {
-        Ok(output)
-    }
+    let match_count = count.load(Ordering::Relaxed);
+
+    Ok(ToolResponse {
+        content: output,
+        truncated: byte_cap_hit,
+        truncation_reason: if byte_cap_hit {
+            Some("byte_cap".to_string())
+        } else {
+            None
+        },
+        match_count: Some(match_count),
+        entry_error_count: Some(entry_err_n),
+        search_error_count: Some(search_err_n),
+        first_error,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -345,14 +379,13 @@ pub fn find(
     directory: &str,
     pattern: &str,
     opts: FindOptions,
-) -> Result<String, AppError> {
+) -> Result<ToolResponse, AppError> {
     let re = Regex::new(pattern)?;
     let max_results = opts.max_results.unwrap_or(DEFAULT_MAX_RESULTS);
 
     let count = Arc::new(AtomicUsize::new(0));
     let entry_errors = Arc::new(AtomicUsize::new(0));
-    let first_entry_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let dummy_search_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let first_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     let walker = WalkBuilder::new(directory)
         .hidden(!opts.include_hidden)
@@ -368,7 +401,7 @@ pub fn find(
         let tx = tx.clone();
         let count = Arc::clone(&count);
         let entry_errors = Arc::clone(&entry_errors);
-        let first_entry_err = Arc::clone(&first_entry_err);
+        let first_error = Arc::clone(&first_error);
         let re = re.clone();
         let mut buf = String::new();
 
@@ -384,7 +417,7 @@ pub fn find(
                 Ok(e) => e,
                 Err(err) => {
                     entry_errors.fetch_add(1, Ordering::Relaxed);
-                    record_first(&first_entry_err, err.to_string());
+                    record_first(&first_error, err.to_string());
                     return WalkState::Continue;
                 }
             };
@@ -425,19 +458,22 @@ pub fn find(
     }
 
     let entry_err_n = entry_errors.load(Ordering::Relaxed);
-    append_notice(
-        &mut output,
-        entry_err_n,
-        0,
-        &first_entry_err,
-        &dummy_search_err,
-    );
+    let first_error = first_error
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
 
-    if output.is_empty() {
-        Ok("No matches found.".to_string())
-    } else {
-        Ok(output)
-    }
+    let match_count = count.load(Ordering::Relaxed);
+
+    Ok(ToolResponse {
+        content: output,
+        truncated: false,
+        truncation_reason: None,
+        match_count: Some(match_count),
+        entry_error_count: Some(entry_err_n),
+        search_error_count: Some(0),
+        first_error,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -449,7 +485,7 @@ pub fn cat(
     offset: usize,
     max_lines: Option<usize>,
     max_bytes: Option<usize>,
-) -> Result<String, AppError> {
+) -> Result<ToolResponse, AppError> {
     let path = PathBuf::from(file_path);
     if !path.is_file() {
         return Err(AppError::InvalidRequest(
@@ -470,12 +506,22 @@ pub fn cat(
         let n = reader.read_line(&mut skip_buf)?;
         if n == 0 {
             // EOF before reaching the offset — nothing to return.
-            return Ok(String::new());
+            return Ok(ToolResponse {
+                content: String::new(),
+                truncated: false,
+                truncation_reason: None,
+                match_count: None,
+                entry_error_count: None,
+                search_error_count: None,
+                first_error: None,
+            });
         }
     }
 
     let mut output = String::new();
     let mut line_count = 0usize;
+    let mut truncated = false;
+    let mut truncation_reason: Option<String> = None;
     let mut buf = String::new();
     loop {
         buf.clear();
@@ -487,7 +533,8 @@ pub fn cat(
             if !output.ends_with('\n') {
                 output.push('\n');
             }
-            output.push_str("... [truncated: line cap]\n");
+            truncated = true;
+            truncation_reason = Some("line_cap".to_string());
             break;
         }
         if output.len() + buf.len() > max_bytes {
@@ -500,14 +547,23 @@ pub fn cat(
             if !output.ends_with('\n') {
                 output.push('\n');
             }
-            output.push_str("... [truncated: byte cap]\n");
+            truncated = true;
+            truncation_reason = Some("byte_cap".to_string());
             break;
         }
         output.push_str(&buf);
         line_count += 1;
     }
 
-    Ok(output)
+    Ok(ToolResponse {
+        content: output,
+        truncated,
+        truncation_reason,
+        match_count: None,
+        entry_error_count: None,
+        search_error_count: None,
+        first_error: None,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -549,12 +605,15 @@ mod tests {
             respect_gitignore: false,
             ..Default::default()
         };
-        let out = grep(path_str(root)?, "needle", opts)?;
-        let match_lines: Vec<&str> = out
+        let res = grep(path_str(root)?, "needle", opts)?;
+        let match_lines: Vec<&str> = res
+            .content
             .lines()
-            .filter(|l| !l.is_empty() && !l.starts_with("[notice"))
+            .filter(|l| !l.is_empty())
             .collect();
-        assert_eq!(match_lines.len(), 10, "got: {:?}", out);
+        assert_eq!(match_lines.len(), 10, "got: {:?}", res.content);
+        assert_eq!(res.match_count, Some(10));
+        assert!(!res.truncated);
         Ok(())
     }
 
@@ -572,7 +631,7 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert!(case_sensitive.contains("No matches"), "got {}", case_sensitive);
+        assert_eq!(case_sensitive.match_count, Some(0), "got {}", case_sensitive.content);
 
         let case_insensitive = grep(
             path_str(root)?,
@@ -584,9 +643,9 @@ mod tests {
             },
         )?;
         assert!(
-            case_insensitive.contains("Hello World"),
+            case_insensitive.content.contains("Hello World"),
             "got {}",
-            case_insensitive
+            case_insensitive.content
         );
         Ok(())
     }
@@ -598,7 +657,7 @@ mod tests {
         write_file(root, "a.rs", "fn target() {}\n")?;
         write_file(root, "b.txt", "fn target() {}\n")?;
 
-        let out = grep(
+        let res = grep(
             path_str(root)?,
             "target",
             GrepOptions {
@@ -607,8 +666,8 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert!(out.contains("a.rs"), "got {}", out);
-        assert!(!out.contains("b.txt"), "got {}", out);
+        assert!(res.content.contains("a.rs"), "got {}", res.content);
+        assert!(!res.content.contains("b.txt"), "got {}", res.content);
         Ok(())
     }
 
@@ -629,8 +688,8 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert!(!respected.contains("secrets.txt"), "got {}", respected);
-        assert!(respected.contains("open.txt"), "got {}", respected);
+        assert!(!respected.content.contains("secrets.txt"), "got {}", respected.content);
+        assert!(respected.content.contains("open.txt"), "got {}", respected.content);
 
         let ignored = grep(
             path_str(root)?,
@@ -640,7 +699,7 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert!(ignored.contains("secrets.txt"), "got {}", ignored);
+        assert!(ignored.content.contains("secrets.txt"), "got {}", ignored.content);
         Ok(())
     }
 
@@ -660,8 +719,8 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert!(basename.contains("foo.rs"), "got {}", basename);
-        assert!(!basename.contains("bar.rs"), "got {}", basename);
+        assert!(basename.content.contains("foo.rs"), "got {}", basename.content);
+        assert!(!basename.content.contains("bar.rs"), "got {}", basename.content);
 
         let fullpath_anchored = find(
             path_str(root)?,
@@ -672,10 +731,11 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert!(
-            fullpath_anchored.contains("No matches"),
+        assert_eq!(
+            fullpath_anchored.match_count,
+            Some(0),
             "got {}",
-            fullpath_anchored
+            fullpath_anchored.content
         );
 
         let fullpath_ok = find(
@@ -687,7 +747,7 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert!(fullpath_ok.contains("foo.rs"), "got {}", fullpath_ok);
+        assert!(fullpath_ok.content.contains("foo.rs"), "got {}", fullpath_ok.content);
         Ok(())
     }
 
@@ -697,12 +757,14 @@ mod tests {
         let path = td.path().join("a.txt");
         fs::write(&path, "L1\nL2\nL3\nL4\nL5\nL6\nL7\n")?;
 
-        let out = cat(path_str(&path)?, 2, Some(3), None)?;
-        assert!(out.starts_with("L3\nL4\nL5\n"), "got {:?}", out);
-        assert!(out.contains("[truncated: line cap]"), "got {:?}", out);
+        let res = cat(path_str(&path)?, 2, Some(3), None)?;
+        assert!(res.content.starts_with("L3\nL4\nL5\n"), "got {:?}", res.content);
+        assert!(res.truncated, "expected truncated=true");
+        assert_eq!(res.truncation_reason, Some("line_cap".to_string()));
 
-        let out = cat(path_str(&path)?, 4, Some(3), None)?;
-        assert_eq!(out, "L5\nL6\nL7\n", "got {:?}", out);
+        let res = cat(path_str(&path)?, 4, Some(3), None)?;
+        assert_eq!(res.content, "L5\nL6\nL7\n", "got {:?}", res.content);
+        assert!(!res.truncated);
         Ok(())
     }
 
@@ -713,9 +775,10 @@ mod tests {
         let body = "abcdefghijklmnopqrstuvwxyz\n".repeat(20);
         fs::write(&path, &body)?;
 
-        let out = cat(path_str(&path)?, 0, None, Some(50))?;
-        assert!(out.contains("[truncated: byte cap]"), "got {:?}", out);
-        assert!(out.len() < body.len(), "expected truncation, got len {}", out.len());
+        let res = cat(path_str(&path)?, 0, None, Some(50))?;
+        assert!(res.truncated, "expected truncated=true, got {:?}", res);
+        assert_eq!(res.truncation_reason, Some("byte_cap".to_string()));
+        assert!(res.content.len() < body.len(), "expected truncation, got len {}", res.content.len());
         Ok(())
     }
 

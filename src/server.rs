@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use rmcp::{
     ServerHandler,
     handler::server::wrapper::Parameters,
+    model::CallToolResult,
     tool, tool_handler, tool_router,
 };
 
@@ -42,7 +43,7 @@ impl CodeMcpServer {
     async fn grep(
         &self,
         Parameters(args): Parameters<GrepArgs>,
-    ) -> Result<String, rmcp::ErrorData> {
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
         let directory = self.scope.check(&args.directory)?;
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::GrepOptions {
@@ -69,7 +70,7 @@ impl CodeMcpServer {
             )
         })??;
 
-        Ok(res)
+        Ok(res.into_call_tool_result())
     }
 
     #[tool(
@@ -78,7 +79,7 @@ impl CodeMcpServer {
     async fn find(
         &self,
         Parameters(args): Parameters<FindArgs>,
-    ) -> Result<String, rmcp::ErrorData> {
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
         let directory = self.scope.check(&args.directory)?;
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::FindOptions {
@@ -97,13 +98,13 @@ impl CodeMcpServer {
             )
         })??;
 
-        Ok(res)
+        Ok(res.into_call_tool_result())
     }
 
     #[tool(
         description = "Read file contents. Use offset to paginate long files; max_lines / max_bytes cap the response size."
     )]
-    async fn cat(&self, Parameters(args): Parameters<CatArgs>) -> Result<String, rmcp::ErrorData> {
+    async fn cat(&self, Parameters(args): Parameters<CatArgs>) -> Result<CallToolResult, rmcp::ErrorData> {
         let file_path = self.scope.check(&args.file_path)?;
         let res = tokio::task::spawn_blocking(move || {
             tools::cat(
@@ -121,7 +122,7 @@ impl CodeMcpServer {
             )
         })??;
 
-        Ok(res)
+        Ok(res.into_call_tool_result())
     }
 
     #[tool(
@@ -130,7 +131,7 @@ impl CodeMcpServer {
     async fn memories(
         &self,
         Parameters(args): Parameters<MemoriesArgs>,
-    ) -> Result<String, rmcp::ErrorData> {
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
         let dir = self.memory_dir.clone().ok_or_else(|| {
             rmcp::ErrorData::invalid_params(
                 "invalid_request",
@@ -149,7 +150,16 @@ impl CodeMcpServer {
                 )
             })??;
 
-        Ok(res)
+        let resp = tools::ToolResponse {
+            content: res,
+            truncated: false,
+            truncation_reason: None,
+            match_count: None,
+            entry_error_count: None,
+            search_error_count: None,
+            first_error: None,
+        };
+        Ok(resp.into_call_tool_result())
     }
 }
 
