@@ -28,8 +28,10 @@ use crate::scope::Scope;
 use crate::server::CodeMcpServer;
 use crate::cli::Args;
 
+use crate::error::AppError;
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> Result<(), AppError> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

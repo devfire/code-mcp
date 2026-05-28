@@ -27,6 +27,9 @@ pub enum AppError {
 
     #[error("Out of project scope: {0}")]
     OutOfScope(String),
+
+    #[error("Server error: {0}")]
+    Axum(#[from] axum::Error),
 }
 
 impl From<AppError> for ErrorData {
@@ -40,7 +43,7 @@ impl From<AppError> for ErrorData {
                 "invalid_params",
                 Some(json!({"error": err.to_string()})),
             ),
-            AppError::Io(_) | AppError::Ignore(_) | AppError::Internal(_) => {
+            AppError::Io(_) | AppError::Ignore(_) | AppError::Internal(_) | AppError::Axum(_) => {
                 ErrorData::internal_error(
                     "internal_error",
                     Some(json!({"error": err.to_string()})),
