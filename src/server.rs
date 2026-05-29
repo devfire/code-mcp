@@ -47,13 +47,13 @@ impl CodeMcpServer {
         let directory = self.scope.check(&args.directory)?;
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::GrepOptions {
-                before_context: args.before_context.unwrap_or(0),
-                after_context: args.after_context.unwrap_or(0),
+                before_context: args.before_context,
+                after_context: args.after_context,
                 max_results: args.max_results,
-                case_insensitive: args.case_insensitive.unwrap_or(false),
-                include_hidden: args.include_hidden.unwrap_or(false),
-                follow_symlinks: args.follow_symlinks.unwrap_or(false),
-                respect_gitignore: args.respect_gitignore.unwrap_or(true),
+                case_insensitive: args.case_insensitive,
+                include_hidden: args.include_hidden,
+                follow_symlinks: args.follow_symlinks,
+                respect_gitignore: args.respect_gitignore,
                 file_extensions: args
                     .file_extensions
                     .map(StringOrVec::into_vec)
@@ -84,9 +84,9 @@ impl CodeMcpServer {
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::FindOptions {
                 max_results: args.max_results,
-                include_hidden: args.include_hidden.unwrap_or(false),
-                respect_gitignore: args.respect_gitignore.unwrap_or(true),
-                match_basename: args.match_basename.unwrap_or(true),
+                include_hidden: args.include_hidden,
+                respect_gitignore: args.respect_gitignore,
+                match_basename: args.match_basename,
             };
             tools::find(&directory.to_string_lossy(), &args.pattern, opts)
         })
@@ -109,7 +109,7 @@ impl CodeMcpServer {
         let res = tokio::task::spawn_blocking(move || {
             tools::cat(
                 &file_path.to_string_lossy(),
-                args.offset.unwrap_or(0),
+                args.offset,
                 args.max_lines,
                 args.max_bytes,
             )

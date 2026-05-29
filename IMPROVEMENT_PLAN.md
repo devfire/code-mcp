@@ -51,11 +51,11 @@ defined as `const` in `tools.rs` but applied via `unwrap_or` at every call site.
 This is fragile — adding a new option means hunting down every call site.
 
 **Actions:**
-- [ ] Use `#[serde(default)]` on all optional fields in the arg structs so
+- [x] Use `#[serde(default)]` on all optional fields in the arg structs so
       deserialization fills in the defaults automatically.
-- [ ] Change the field types from `Option<usize>` to `usize` where a sensible
+- [x] Change the field types from `Option<usize>` to `usize` where a sensible
       default always exists (e.g., `max_results: usize` with `#[serde(default = "default_max_results")]`).
-- [ ] Remove the `unwrap_or` calls in `tools.rs` — values are already resolved.
+- [x] Remove the `unwrap_or` calls in `tools.rs` — values are already resolved.
 
 ---
 
