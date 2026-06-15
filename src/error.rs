@@ -2,6 +2,19 @@ use rmcp::ErrorData;
 use serde_json::json;
 use thiserror::Error;
 
+/// Convert a `tokio::task::JoinError` (from `spawn_blocking`) into an
+/// `rmcp::ErrorData` with `internal_error` code. Used by every tool handler
+/// so the `.map_err` boilerplate is a single call.
+pub fn join_error(e: tokio::task::JoinError) -> ErrorData {
+    ErrorData::internal_error(
+        "internal_error",
+        Some(json!({"error": e.to_string()})),
+    )
+}
+
+/// Convenience alias for tool handler return types.
+pub type ToolResult<T> = Result<T, ErrorData>;
+
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("I/O error: {0}")]

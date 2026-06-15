@@ -8,9 +8,10 @@ use rmcp::{
 };
 
 use crate::args::{CatArgs, FindArgs, GrepArgs, MemoriesArgs, StringOrVec};
+use crate::error::{ToolResult, join_error};
 use crate::memory::load_memory;
 use crate::scope::Scope;
-use crate::tools;
+use crate::tools::{self, OutputMode};
 
 #[derive(Clone)]
 pub struct CodeMcpServer {
@@ -38,13 +39,14 @@ impl CodeMcpServer {
 #[tool_router]
 impl CodeMcpServer {
     #[tool(
-        description = "Regex search across files (parallel, gitignore-aware). Options: case_insensitive, file_extensions, before/after_context, include_hidden, follow_symlinks, max_results, max_bytes."
+        description = "Regex search across files (parallel, gitignore-aware). output_mode: 'files_with_matches' (default — list matching file paths), 'content' (matching lines with line numbers), 'count' (per-file match tallies). Other options: case_insensitive, file_extensions, before/after_context, include_hidden, follow_symlinks, max_results, max_bytes."
     )]
     async fn grep(
         &self,
         Parameters(args): Parameters<GrepArgs>,
-    ) -> Result<CallToolResult, rmcp::ErrorData> {
+    ) -> ToolResult<CallToolResult> {
         let directory = self.scope.check(&args.directory)?;
+        let output_mode = OutputMode::from_str_lossy(&args.output_mode)?;
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::GrepOptions {
                 before_context: args.before_context,
@@ -59,16 +61,12 @@ impl CodeMcpServer {
                     .map(StringOrVec::into_vec)
                     .unwrap_or_default(),
                 max_bytes: args.max_bytes,
+                output_mode,
             };
             tools::grep(&directory.to_string_lossy(), &args.pattern, opts)
         })
         .await
-        .map_err(|e| {
-            rmcp::ErrorData::internal_error(
-                "internal_error",
-                Some(serde_json::json!({"error": e.to_string()})),
-            )
-        })??;
+        .map_err(join_error)??;
 
         Ok(res.into_call_tool_result())
     }
@@ -79,7 +77,7 @@ impl CodeMcpServer {
     async fn find(
         &self,
         Parameters(args): Parameters<FindArgs>,
-    ) -> Result<CallToolResult, rmcp::ErrorData> {
+    ) -> ToolResult<CallToolResult> {
         let directory = self.scope.check(&args.directory)?;
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::FindOptions {
@@ -91,12 +89,7 @@ impl CodeMcpServer {
             tools::find(&directory.to_string_lossy(), &args.pattern, opts)
         })
         .await
-        .map_err(|e| {
-            rmcp::ErrorData::internal_error(
-                "internal_error",
-                Some(serde_json::json!({"error": e.to_string()})),
-            )
-        })??;
+        .map_err(join_error)??;
 
         Ok(res.into_call_tool_result())
     }
@@ -104,7 +97,7 @@ impl CodeMcpServer {
     #[tool(
         description = "Read file contents. Use offset to paginate long files; max_lines / max_bytes cap the response size."
     )]
-    async fn cat(&self, Parameters(args): Parameters<CatArgs>) -> Result<CallToolResult, rmcp::ErrorData> {
+    async fn cat(&self, Parameters(args): Parameters<CatArgs>) -> ToolResult<CallToolResult> {
         let file_path = self.scope.check(&args.file_path)?;
         let res = tokio::task::spawn_blocking(move || {
             tools::cat(
@@ -115,12 +108,7 @@ impl CodeMcpServer {
             )
         })
         .await
-        .map_err(|e| {
-            rmcp::ErrorData::internal_error(
-                "internal_error",
-                Some(serde_json::json!({"error": e.to_string()})),
-            )
-        })??;
+        .map_err(join_error)??;
 
         Ok(res.into_call_tool_result())
     }
@@ -131,7 +119,7 @@ impl CodeMcpServer {
     async fn memories(
         &self,
         Parameters(args): Parameters<MemoriesArgs>,
-    ) -> Result<CallToolResult, rmcp::ErrorData> {
+    ) -> ToolResult<CallToolResult> {
         let dir = self.memory_dir.clone().ok_or_else(|| {
             rmcp::ErrorData::invalid_params(
                 "invalid_request",
@@ -143,12 +131,7 @@ impl CodeMcpServer {
 
         let res = tokio::task::spawn_blocking(move || load_memory(&dir, args.name.as_deref()))
             .await
-            .map_err(|e| {
-                rmcp::ErrorData::internal_error(
-                    "internal_error",
-                    Some(serde_json::json!({"error": e.to_string()})),
-                )
-            })??;
+            .map_err(join_error)??;
 
         let resp = tools::ToolResponse {
             content: res,
@@ -180,6 +163,13 @@ with `invalid_params`.\n\n",
 Regex flavor: Rust `regex` crate. No lookaround or backreferences. \
 Use the inline flag (?i) at the start of a pattern for case-insensitive matching, \
 or pass case_insensitive: true to grep.
+
+`grep` supports three output modes via the `output_mode` parameter:
+- `files_with_matches` (default): returns only the paths of files containing at \
+least one match. This is the most token-efficient mode for broad reconnaissance \
+(\"which files mention X?\"). Use `cat` to read specific files afterwards.
+- `content`: returns matching lines with line numbers (the traditional grep output).
+- `count`: returns per-file match tallies as `path: N` lines.
 
 `find` matches the basename of each path by default. Set match_basename: false to \
 match against the full path instead.

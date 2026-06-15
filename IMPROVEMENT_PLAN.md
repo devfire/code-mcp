@@ -71,11 +71,11 @@ This is fragile — adding a new option means hunting down every call site.
 This 5-line pattern is repeated identically for all four tools.
 
 **Actions:**
-- [ ] Add a `From<JoinError> for rmcp::ErrorData` impl (or a helper function
+- [x] Add a `From<JoinError> for rmcp::ErrorData` impl (or a helper function
       `fn join_error(e: JoinError) -> rmcp::ErrorData`) to eliminate the repetition.
-- [ ] Similarly, the `AppError -> ErrorData` conversion in `error.rs` already exists;
+- [x] Similarly, the `AppError -> ErrorData` conversion in `error.rs` already exists;
       ensure the tool methods use `?` directly instead of manual mapping where possible.
-- [ ] Consider a `Result<T, rmcp::ErrorData>` type alias for tool return types.
+- [x] Consider a `Result<T, rmcp::ErrorData>` type alias for tool return types.
 
 ---
 
@@ -229,10 +229,38 @@ docs, no `///` doc comments on public API in `tools.rs`.
 
 ---
 
+## 15. Add `output_mode` to `grep` — `files_with_matches` / `content` / `count`
+
+**Problem:** `grep` has exactly one output mode: dump matching lines. The consumers
+are LLM agents paying per token, and their most common first query is broad
+reconnaissance ("which files mention X?"). For that, full content lines are 10–50x
+more tokens than needed, and when `max_results` truncates, the 100 returned lines
+are arbitrary (walk order) — they may all come from the first few files the parallel
+walker reached. 100 file *paths* cover essentially any realistic result set.
+Claude Code's own Grep tool defaults to `files_with_matches` for exactly this reason,
+so agents already expect the grep-for-files → cat workflow.
+
+**Actions:**
+- [x] Add `output_mode: String` to `GrepArgs` with values `files_with_matches`,
+      `content`, `count` (serde default; reject unknown values with `invalid_params`).
+- [x] `files_with_matches`: emit the path on a file's first match, then stop
+      searching that file (`grep-searcher` can abort after first match — this is
+      *faster* than today). `max_results` caps the number of files.
+- [x] `count`: per-file match tally, output as `path: N` lines.
+- [x] `content`: current behavior, unchanged.
+- [x] Keep the streaming/exact-capping design intact — all modes still use the
+      thread-local-buffer + mpsc pipeline; only what gets written differs.
+- [x] Reuse `ToolResponse.match_count` / `truncated` for the metadata.
+- [x] Default to `files_with_matches` (matches agent expectations; acceptable
+      breaking change at v0.1). Document the modes in `README.md`.
+
+---
+
 ## Priority Order
 
 | Priority | Item | Effort | Impact |
 |----------|------|--------|--------|
+| 🔴 High | 15. grep output_mode | Low | Token economy / agent UX |
 | 🔴 High | 1. Decompose main.rs | Medium | Maintainability |
 | 🔴 High | 4. Eliminate repeated map_err | Low | DRY / readability |
 | 🔴 High | 13. Clippy pass | Low | Code quality |

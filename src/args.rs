@@ -48,6 +48,10 @@ fn default_file_extensions() -> Option<StringOrVec> {
     None
 }
 
+fn default_output_mode() -> String {
+    "files_with_matches".to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Arg structs — serde fills in defaults automatically
 // ---------------------------------------------------------------------------
@@ -86,6 +90,9 @@ pub struct GrepArgs {
     #[serde(default = "default_max_bytes")]
     #[schemars(description = "Hard cap on total response size in bytes (default ~5 MiB). Truncates with a marker.")]
     pub max_bytes: usize,
+    #[serde(default = "default_output_mode")]
+    #[schemars(description = "Output mode: 'files_with_matches' (default — list file paths only), 'content' (matching lines with line numbers), 'count' (per-file match tallies as path: N).")]
+    pub output_mode: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
