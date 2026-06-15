@@ -8,6 +8,7 @@ use rmcp::{
 };
 
 use crate::args::{CatArgs, FindArgs, GrepArgs, MemoriesArgs, StringOrVec};
+use crate::error::{ToolResult, join_error};
 use crate::memory::load_memory;
 use crate::scope::Scope;
 use crate::tools;
@@ -43,7 +44,7 @@ impl CodeMcpServer {
     async fn grep(
         &self,
         Parameters(args): Parameters<GrepArgs>,
-    ) -> Result<CallToolResult, rmcp::ErrorData> {
+    ) -> ToolResult<CallToolResult> {
         let directory = self.scope.check(&args.directory)?;
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::GrepOptions {
@@ -63,12 +64,7 @@ impl CodeMcpServer {
             tools::grep(&directory.to_string_lossy(), &args.pattern, opts)
         })
         .await
-        .map_err(|e| {
-            rmcp::ErrorData::internal_error(
-                "internal_error",
-                Some(serde_json::json!({"error": e.to_string()})),
-            )
-        })??;
+        .map_err(join_error)??;
 
         Ok(res.into_call_tool_result())
     }
@@ -79,7 +75,7 @@ impl CodeMcpServer {
     async fn find(
         &self,
         Parameters(args): Parameters<FindArgs>,
-    ) -> Result<CallToolResult, rmcp::ErrorData> {
+    ) -> ToolResult<CallToolResult> {
         let directory = self.scope.check(&args.directory)?;
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::FindOptions {
@@ -91,12 +87,7 @@ impl CodeMcpServer {
             tools::find(&directory.to_string_lossy(), &args.pattern, opts)
         })
         .await
-        .map_err(|e| {
-            rmcp::ErrorData::internal_error(
-                "internal_error",
-                Some(serde_json::json!({"error": e.to_string()})),
-            )
-        })??;
+        .map_err(join_error)??;
 
         Ok(res.into_call_tool_result())
     }
@@ -104,7 +95,7 @@ impl CodeMcpServer {
     #[tool(
         description = "Read file contents. Use offset to paginate long files; max_lines / max_bytes cap the response size."
     )]
-    async fn cat(&self, Parameters(args): Parameters<CatArgs>) -> Result<CallToolResult, rmcp::ErrorData> {
+    async fn cat(&self, Parameters(args): Parameters<CatArgs>) -> ToolResult<CallToolResult> {
         let file_path = self.scope.check(&args.file_path)?;
         let res = tokio::task::spawn_blocking(move || {
             tools::cat(
@@ -115,12 +106,7 @@ impl CodeMcpServer {
             )
         })
         .await
-        .map_err(|e| {
-            rmcp::ErrorData::internal_error(
-                "internal_error",
-                Some(serde_json::json!({"error": e.to_string()})),
-            )
-        })??;
+        .map_err(join_error)??;
 
         Ok(res.into_call_tool_result())
     }
@@ -131,7 +117,7 @@ impl CodeMcpServer {
     async fn memories(
         &self,
         Parameters(args): Parameters<MemoriesArgs>,
-    ) -> Result<CallToolResult, rmcp::ErrorData> {
+    ) -> ToolResult<CallToolResult> {
         let dir = self.memory_dir.clone().ok_or_else(|| {
             rmcp::ErrorData::invalid_params(
                 "invalid_request",
@@ -143,12 +129,7 @@ impl CodeMcpServer {
 
         let res = tokio::task::spawn_blocking(move || load_memory(&dir, args.name.as_deref()))
             .await
-            .map_err(|e| {
-                rmcp::ErrorData::internal_error(
-                    "internal_error",
-                    Some(serde_json::json!({"error": e.to_string()})),
-                )
-            })??;
+            .map_err(join_error)??;
 
         let resp = tools::ToolResponse {
             content: res,
