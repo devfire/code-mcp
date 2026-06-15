@@ -241,17 +241,17 @@ Claude Code's own Grep tool defaults to `files_with_matches` for exactly this re
 so agents already expect the grep-for-files → cat workflow.
 
 **Actions:**
-- [ ] Add `output_mode: String` to `GrepArgs` with values `files_with_matches`,
+- [x] Add `output_mode: String` to `GrepArgs` with values `files_with_matches`,
       `content`, `count` (serde default; reject unknown values with `invalid_params`).
-- [ ] `files_with_matches`: emit the path on a file's first match, then stop
+- [x] `files_with_matches`: emit the path on a file's first match, then stop
       searching that file (`grep-searcher` can abort after first match — this is
       *faster* than today). `max_results` caps the number of files.
-- [ ] `count`: per-file match tally, output as `path: N` lines.
-- [ ] `content`: current behavior, unchanged.
-- [ ] Keep the streaming/exact-capping design intact — all modes still use the
+- [x] `count`: per-file match tally, output as `path: N` lines.
+- [x] `content`: current behavior, unchanged.
+- [x] Keep the streaming/exact-capping design intact — all modes still use the
       thread-local-buffer + mpsc pipeline; only what gets written differs.
-- [ ] Reuse `ToolResponse.match_count` / `truncated` for the metadata.
-- [ ] Default to `files_with_matches` (matches agent expectations; acceptable
+- [x] Reuse `ToolResponse.match_count` / `truncated` for the metadata.
+- [x] Default to `files_with_matches` (matches agent expectations; acceptable
       breaking change at v0.1). Document the modes in `README.md`.
 
 ---

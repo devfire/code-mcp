@@ -8,6 +8,7 @@ use regex::Regex;
 use rmcp::model::CallToolResult;
 use serde::Serialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::mem;
@@ -74,6 +75,36 @@ impl ToolResponse {
 // Public API
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// OutputMode for grep
+// ---------------------------------------------------------------------------
+
+/// Controls what the `grep` tool emits for each match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputMode {
+    /// Emit the file path on the first match, then skip the rest of that file.
+    FilesWithMatches,
+    /// Emit matching lines with line numbers (the original/default behaviour).
+    Content,
+    /// Emit per-file match tallies as `path: N` lines.
+    Count,
+}
+
+impl OutputMode {
+    /// Parse a string into an `OutputMode`, returning an error for unknown values.
+    pub fn from_str_lossy(s: &str) -> Result<Self, AppError> {
+        match s {
+            "files_with_matches" => Ok(Self::FilesWithMatches),
+            "content" => Ok(Self::Content),
+            "count" => Ok(Self::Count),
+            other => Err(AppError::InvalidRequest(format!(
+                "unknown output_mode '{}'; expected one of: files_with_matches, content, count",
+                other
+            ))),
+        }
+    }
+}
+
 pub struct GrepOptions {
     pub before_context: usize,
     pub after_context: usize,
@@ -84,6 +115,7 @@ pub struct GrepOptions {
     pub respect_gitignore: bool,
     pub file_extensions: Vec<String>,
     pub max_bytes: usize,
+    pub output_mode: OutputMode,
 }
 
 impl Default for GrepOptions {
@@ -98,6 +130,7 @@ impl Default for GrepOptions {
             respect_gitignore: true,
             file_extensions: Vec::new(),
             max_bytes: DEFAULT_MAX_BYTES,
+            output_mode: OutputMode::FilesWithMatches,
         }
     }
 }
@@ -194,6 +227,81 @@ impl<'a> Sink for MatchSink<'a> {
 }
 
 // ---------------------------------------------------------------------------
+// FileMatchSink — for output_mode = files_with_matches
+// ---------------------------------------------------------------------------
+
+/// Sink that records only whether a file has at least one match. On the first
+/// match it sets `matched_this_file` and returns `Ok(false)` to abort searching
+/// that file (faster than continuing to read it).
+struct FileMatchSink<'a> {
+    count: &'a AtomicUsize,
+    max_results: usize,
+    matched_this_file: bool,
+}
+
+impl<'a> Sink for FileMatchSink<'a> {
+    type Error = io::Error;
+
+    fn matched(
+        &mut self,
+        _searcher: &Searcher,
+        _mat: &SinkMatch<'_>,
+    ) -> Result<bool, io::Error> {
+        if self.matched_this_file {
+            // Already recorded this file; stop searching it.
+            return Ok(false);
+        }
+        self.matched_this_file = true;
+        let prev = self.count.fetch_add(1, Ordering::Relaxed);
+        if prev >= self.max_results {
+            return Ok(false);
+        }
+        // Stop searching this file — we only need the first match.
+        Ok(false)
+    }
+
+    fn context(
+        &mut self,
+        _searcher: &Searcher,
+        _ctx: &SinkContext<'_>,
+    ) -> Result<bool, io::Error> {
+        // No context needed for files_with_matches mode.
+        Ok(true)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CountSink — for output_mode = count
+// ---------------------------------------------------------------------------
+
+/// Sink that tallies matches per file. Does not emit any text during the
+/// search; the per-file count is collected after the search completes.
+struct CountSink {
+    count: usize,
+}
+
+impl Sink for CountSink {
+    type Error = io::Error;
+
+    fn matched(
+        &mut self,
+        _searcher: &Searcher,
+        _mat: &SinkMatch<'_>,
+    ) -> Result<bool, io::Error> {
+        self.count += 1;
+        Ok(true)
+    }
+
+    fn context(
+        &mut self,
+        _searcher: &Searcher,
+        _ctx: &SinkContext<'_>,
+    ) -> Result<bool, io::Error> {
+        Ok(true)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Error capture helpers
 // ---------------------------------------------------------------------------
 
@@ -210,6 +318,60 @@ fn record_first(slot: &Mutex<Option<String>>, msg: String) {
 // ---------------------------------------------------------------------------
 
 pub fn grep(
+    directory: &str,
+    pattern: &str,
+    opts: GrepOptions,
+) -> Result<ToolResponse, AppError> {
+    match opts.output_mode {
+        OutputMode::Content => grep_content(directory, pattern, opts),
+        OutputMode::FilesWithMatches => grep_files(directory, pattern, opts),
+        OutputMode::Count => grep_count(directory, pattern, opts),
+    }
+}
+
+/// Build a parallel walker from the shared walker options in `GrepOptions`.
+fn build_parallel_walker(directory: &str, opts: &GrepOptions) -> ignore::WalkParallel {
+    WalkBuilder::new(directory)
+        .hidden(!opts.include_hidden)
+        .git_ignore(opts.respect_gitignore)
+        .git_global(opts.respect_gitignore)
+        .git_exclude(opts.respect_gitignore)
+        .follow_links(opts.follow_symlinks)
+        .build_parallel()
+}
+
+/// Check whether a directory entry's extension matches the filter list.
+/// Returns `true` if the file should be searched.
+fn extension_matches(path: &Path, extensions: &[String]) -> bool {
+    if extensions.is_empty() {
+        return true;
+    }
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| extensions.iter().any(|w| w == e))
+        .unwrap_or(false)
+}
+
+/// Collect shared error state into the final `ToolResponse` metadata fields.
+fn error_metadata(
+    entry_errors: &AtomicUsize,
+    search_errors: &AtomicUsize,
+    first_entry_err: &Mutex<Option<String>>,
+    first_search_err: &Mutex<Option<String>>,
+) -> (usize, usize, Option<String>) {
+    let entry_err_n = entry_errors.load(Ordering::Relaxed);
+    let search_err_n = search_errors.load(Ordering::Relaxed);
+    let first_error = first_entry_err
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .or_else(|| first_search_err.lock().ok().and_then(|g| g.clone()));
+    (entry_err_n, search_err_n, first_error)
+}
+
+/// `content` mode — the original behaviour: emit matching lines with line
+/// numbers, streaming through the mpsc pipeline.
+fn grep_content(
     directory: &str,
     pattern: &str,
     opts: GrepOptions,
@@ -236,13 +398,7 @@ pub fn grep(
 
     let extensions = opts.file_extensions.clone();
 
-    let walker = WalkBuilder::new(directory)
-        .hidden(!opts.include_hidden)
-        .git_ignore(opts.respect_gitignore)
-        .git_global(opts.respect_gitignore)
-        .git_exclude(opts.respect_gitignore)
-        .follow_links(opts.follow_symlinks)
-        .build_parallel();
+    let walker = build_parallel_walker(directory, &opts);
 
     let (tx, rx) = channel::<String>();
 
@@ -281,16 +437,8 @@ pub fn grep(
                 return WalkState::Continue;
             }
 
-            if !extensions.is_empty() {
-                let matches_ext = entry
-                    .path()
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| extensions.iter().any(|w| w == e))
-                    .unwrap_or(false);
-                if !matches_ext {
-                    return WalkState::Continue;
-                }
+            if !extension_matches(entry.path(), &extensions) {
+                return WalkState::Continue;
             }
 
             let path = entry.path();
@@ -347,14 +495,12 @@ pub fn grep(
         }
     }
 
-    let entry_err_n = entry_errors.load(Ordering::Relaxed);
-    let search_err_n = search_errors.load(Ordering::Relaxed);
-    let first_error = first_entry_err
-        .lock()
-        .ok()
-        .and_then(|g| g.clone())
-        .or_else(|| first_search_err.lock().ok().and_then(|g| g.clone()));
-
+    let (entry_err_n, search_err_n, first_error) = error_metadata(
+        &entry_errors,
+        &search_errors,
+        &first_entry_err,
+        &first_search_err,
+    );
     let match_count = count.load(Ordering::Relaxed);
 
     Ok(ToolResponse {
@@ -366,6 +512,270 @@ pub fn grep(
             None
         },
         match_count: Some(match_count),
+        entry_error_count: Some(entry_err_n),
+        search_error_count: Some(search_err_n),
+        first_error,
+    })
+}
+
+/// `files_with_matches` mode — emit the file path on the first match, then
+/// abort searching that file. `max_results` caps the number of *files*.
+fn grep_files(
+    directory: &str,
+    pattern: &str,
+    opts: GrepOptions,
+) -> Result<ToolResponse, AppError> {
+    let matcher: RegexMatcher = RegexMatcherBuilder::new()
+        .case_insensitive(opts.case_insensitive)
+        .build(pattern)?;
+
+    // No context needed for files_with_matches; disable it for speed.
+    let searcher_proto = SearcherBuilder::new()
+        .binary_detection(BinaryDetection::quit(b'\x00'))
+        .line_number(false)
+        .build();
+
+    let max_results = opts.max_results;
+    let max_bytes = opts.max_bytes;
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let entry_errors = Arc::new(AtomicUsize::new(0));
+    let search_errors = Arc::new(AtomicUsize::new(0));
+    let first_entry_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let first_search_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    let extensions = opts.file_extensions.clone();
+
+    let walker = build_parallel_walker(directory, &opts);
+
+    let (tx, rx) = channel::<String>();
+
+    walker.run(|| {
+        let tx: Sender<String> = tx.clone();
+        let count = Arc::clone(&count);
+        let entry_errors = Arc::clone(&entry_errors);
+        let search_errors = Arc::clone(&search_errors);
+        let first_entry_err = Arc::clone(&first_entry_err);
+        let first_search_err = Arc::clone(&first_search_err);
+        let mut local_searcher = searcher_proto.clone();
+        let local_matcher = matcher.clone();
+        let extensions = extensions.clone();
+
+        Box::new(move |result| {
+            if count.load(Ordering::Relaxed) >= max_results {
+                return WalkState::Quit;
+            }
+
+            let entry = match result {
+                Ok(e) => e,
+                Err(err) => {
+                    entry_errors.fetch_add(1, Ordering::Relaxed);
+                    record_first(&first_entry_err, err.to_string());
+                    return WalkState::Continue;
+                }
+            };
+
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                return WalkState::Continue;
+            }
+
+            if !extension_matches(entry.path(), &extensions) {
+                return WalkState::Continue;
+            }
+
+            let path = entry.path();
+            let mut sink = FileMatchSink {
+                count: &count,
+                max_results,
+                matched_this_file: false,
+            };
+            if let Err(err) = local_searcher.search_path(&local_matcher, path, &mut sink) {
+                search_errors.fetch_add(1, Ordering::Relaxed);
+                record_first(
+                    &first_search_err,
+                    format!("{}: {}", path.display(), err),
+                );
+            }
+
+            // If this file matched, emit its path.
+            if sink.matched_this_file {
+                let line = format!("{}\n", path.display());
+                let _ = tx.send(line);
+            }
+
+            if count.load(Ordering::Relaxed) >= max_results {
+                WalkState::Quit
+            } else {
+                WalkState::Continue
+            }
+        })
+    });
+
+    drop(tx);
+
+    let mut output = String::new();
+    let mut byte_cap_hit = false;
+    while let Ok(chunk) = rx.recv() {
+        if byte_cap_hit {
+            continue;
+        }
+        if output.len() + chunk.len() > max_bytes {
+            let remaining = max_bytes.saturating_sub(output.len());
+            let mut cut = remaining.min(chunk.len());
+            while cut > 0 && !chunk.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            output.push_str(&chunk[..cut]);
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
+            byte_cap_hit = true;
+        } else {
+            output.push_str(&chunk);
+        }
+    }
+
+    let (entry_err_n, search_err_n, first_error) = error_metadata(
+        &entry_errors,
+        &search_errors,
+        &first_entry_err,
+        &first_search_err,
+    );
+    let match_count = count.load(Ordering::Relaxed);
+
+    Ok(ToolResponse {
+        content: output,
+        truncated: byte_cap_hit,
+        truncation_reason: if byte_cap_hit {
+            Some("byte_cap".to_string())
+        } else {
+            None
+        },
+        match_count: Some(match_count),
+        entry_error_count: Some(entry_err_n),
+        search_error_count: Some(search_err_n),
+        first_error,
+    })
+}
+
+/// `count` mode — tally matches per file, output as `path: N` lines.
+fn grep_count(
+    directory: &str,
+    pattern: &str,
+    opts: GrepOptions,
+) -> Result<ToolResponse, AppError> {
+    let matcher: RegexMatcher = RegexMatcherBuilder::new()
+        .case_insensitive(opts.case_insensitive)
+        .build(pattern)?;
+
+    // No context needed for count mode.
+    let searcher_proto = SearcherBuilder::new()
+        .binary_detection(BinaryDetection::quit(b'\x00'))
+        .line_number(false)
+        .build();
+
+    let max_results = opts.max_results;
+    let max_bytes = opts.max_bytes;
+
+    let entry_errors = Arc::new(AtomicUsize::new(0));
+    let search_errors = Arc::new(AtomicUsize::new(0));
+    let first_entry_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let first_search_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    let extensions = opts.file_extensions.clone();
+
+    // Shared map: canonical path string → match count.
+    let file_counts: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    let walker = build_parallel_walker(directory, &opts);
+
+    walker.run(|| {
+        let entry_errors = Arc::clone(&entry_errors);
+        let search_errors = Arc::clone(&search_errors);
+        let first_entry_err = Arc::clone(&first_entry_err);
+        let first_search_err = Arc::clone(&first_search_err);
+        let mut local_searcher = searcher_proto.clone();
+        let local_matcher = matcher.clone();
+        let extensions = extensions.clone();
+        let file_counts = Arc::clone(&file_counts);
+
+        Box::new(move |result| {
+            let entry = match result {
+                Ok(e) => e,
+                Err(err) => {
+                    entry_errors.fetch_add(1, Ordering::Relaxed);
+                    record_first(&first_entry_err, err.to_string());
+                    return WalkState::Continue;
+                }
+            };
+
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                return WalkState::Continue;
+            }
+
+            if !extension_matches(entry.path(), &extensions) {
+                return WalkState::Continue;
+            }
+
+            let path = entry.path();
+            let mut sink = CountSink { count: 0 };
+            if let Err(err) = local_searcher.search_path(&local_matcher, path, &mut sink) {
+                search_errors.fetch_add(1, Ordering::Relaxed);
+                record_first(
+                    &first_search_err,
+                    format!("{}: {}", path.display(), err),
+                );
+            }
+
+            if sink.count > 0 {
+                let key = path.to_string_lossy().into_owned();
+                let mut map = file_counts.lock().unwrap_or_else(|e| e.into_inner());
+                *map.entry(key).or_insert(0) += sink.count;
+            }
+
+            WalkState::Continue
+        })
+    });
+
+    // Sort by path for deterministic output.
+    let mut counts_map = file_counts.lock().unwrap_or_else(|e| e.into_inner());
+    let mut entries: Vec<_> = counts_map.drain().collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let total_matches: usize = entries.iter().map(|(_, c)| *c).sum();
+    let file_count = entries.len();
+
+    // Apply max_results cap on number of files.
+    let truncated = file_count > max_results;
+    if truncated {
+        entries.truncate(max_results);
+    }
+
+    let mut output = String::new();
+    for (path, count) in &entries {
+        let line = format!("{}: {}\n", path, count);
+        if output.len() + line.len() > max_bytes {
+            break;
+        }
+        output.push_str(&line);
+    }
+
+    let (entry_err_n, search_err_n, first_error) = error_metadata(
+        &entry_errors,
+        &search_errors,
+        &first_entry_err,
+        &first_search_err,
+    );
+
+    Ok(ToolResponse {
+        content: output,
+        truncated,
+        truncation_reason: if truncated {
+            Some("max_results".to_string())
+        } else {
+            None
+        },
+        match_count: Some(total_matches),
         entry_error_count: Some(entry_err_n),
         search_error_count: Some(search_err_n),
         first_error,
@@ -626,6 +1036,7 @@ mod tests {
             path_str(root)?,
             "hello",
             GrepOptions {
+                output_mode: OutputMode::Content,
                 respect_gitignore: false,
                 ..Default::default()
             },
@@ -637,6 +1048,7 @@ mod tests {
             "hello",
             GrepOptions {
                 case_insensitive: true,
+                output_mode: OutputMode::Content,
                 respect_gitignore: false,
                 ..Default::default()
             },
@@ -788,6 +1200,99 @@ mod tests {
             Err(AppError::InvalidRequest(_)) => Ok(()),
             Err(other) => Err(format!("expected InvalidRequest, got {:?}", other).into()),
             Ok(s) => Err(format!("expected error, got Ok({:?})", s).into()),
+        }
+    }
+
+    #[test]
+    fn grep_files_with_matches_mode() -> TestResult {
+        let td = TempDir::new()?;
+        let root = td.path();
+        // Two files with multiple matches each.
+        write_file(root, "a.txt", "needle\nneedle\nneedle\n")?;
+        write_file(root, "b.txt", "no match\n")?;
+        write_file(root, "c.rs", "needle here\n")?;
+
+        let res = grep(
+            path_str(root)?,
+            "needle",
+            GrepOptions {
+                output_mode: OutputMode::FilesWithMatches,
+                respect_gitignore: false,
+                ..Default::default()
+            },
+        )?;
+        // Should list file paths only, not line content.
+        assert!(res.content.contains("a.txt"), "got {}", res.content);
+        assert!(!res.content.contains("b.txt"), "got {}", res.content);
+        assert!(res.content.contains("c.rs"), "got {}", res.content);
+        // No line numbers or colons (beyond the path itself).
+        assert!(!res.content.contains("1:"), "should not have line numbers: {}", res.content);
+        // match_count is the number of files with matches.
+        assert_eq!(res.match_count, Some(2), "got {:?}", res.match_count);
+        Ok(())
+    }
+
+    #[test]
+    fn grep_files_with_matches_respects_max_results() -> TestResult {
+        let td = TempDir::new()?;
+        let root = td.path();
+        for i in 0..20 {
+            write_file(root, &format!("f{}.txt", i), "needle\n")?;
+        }
+
+        let res = grep(
+            path_str(root)?,
+            "needle",
+            GrepOptions {
+                output_mode: OutputMode::FilesWithMatches,
+                max_results: 5,
+                respect_gitignore: false,
+                ..Default::default()
+            },
+        )?;
+        // Should cap at ~5 files.
+        assert!(
+            res.match_count.unwrap() <= 7,
+            "expected match_count <= 7, got {:?}",
+            res.match_count
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn grep_count_mode() -> TestResult {
+        let td = TempDir::new()?;
+        let root = td.path();
+        write_file(root, "a.txt", "needle\nneedle\nneedle\n")?;
+        write_file(root, "b.txt", "no match\n")?;
+        write_file(root, "c.rs", "needle here\n")?;
+
+        let res = grep(
+            path_str(root)?,
+            "needle",
+            GrepOptions {
+                output_mode: OutputMode::Count,
+                respect_gitignore: false,
+                ..Default::default()
+            },
+        )?;
+        // Should have per-file tallies.
+        assert!(res.content.contains("a.txt: 3"), "got {}", res.content);
+        assert!(!res.content.contains("b.txt"), "got {}", res.content);
+        assert!(res.content.contains("c.rs: 1"), "got {}", res.content);
+        // Total matches across all files.
+        assert_eq!(res.match_count, Some(4), "got {:?}", res.match_count);
+        Ok(())
+    }
+
+    #[test]
+    fn grep_output_mode_rejects_unknown() -> TestResult {
+        match OutputMode::from_str_lossy("bogus") {
+            Err(AppError::InvalidRequest(msg)) => {
+                assert!(msg.contains("bogus"), "got: {}", msg);
+                Ok(())
+            }
+            other => Err(format!("expected InvalidRequest, got {:?}", other).into()),
         }
     }
 }
