@@ -58,6 +58,7 @@ fn default_output_mode() -> String {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[allow(clippy::struct_excessive_bools)]
 pub struct GrepArgs {
     #[schemars(description = "Directory to search in")]
     pub directory: String,

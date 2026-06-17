@@ -1,4 +1,5 @@
 use crate::error::AppError;
+use std::fmt::Write;
 use std::path::Path;
 
 /// Load a memory file from the given directory, or return an index/listing.
@@ -18,16 +19,12 @@ pub fn load_memory(dir: &Path, name: Option<&str>) -> Result<String, AppError> {
         // Reject path traversal: name must be a single, non-empty path component.
         if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
             return Err(AppError::InvalidRequest(format!(
-                "memory name must be a plain filename, got: {:?}",
-                name
+                "memory name must be a plain filename, got: {name:?}"
             )));
         }
         let path = dir.join(name);
         if !path.is_file() {
-            return Err(AppError::NotFound(format!(
-                "memory not found: {}",
-                name
-            )));
+            return Err(AppError::NotFound(format!("memory not found: {name}")));
         }
         return Ok(std::fs::read_to_string(&path)?);
     }
@@ -40,7 +37,7 @@ pub fn load_memory(dir: &Path, name: Option<&str>) -> Result<String, AppError> {
 
     let mut listing = String::from("# Memory dir contents\n\n");
     let mut entries: Vec<_> = std::fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| {
             e.path()
                 .extension()
@@ -48,13 +45,13 @@ pub fn load_memory(dir: &Path, name: Option<&str>) -> Result<String, AppError> {
                 .is_some_and(|s| s == "md")
         })
         .collect();
-    entries.sort_by_key(|e| e.file_name());
+    entries.sort_by_key(std::fs::DirEntry::file_name);
     if entries.is_empty() {
         listing.push_str("(no .md files found; configure MEMORY.md or add memory files)\n");
     } else {
         for e in entries {
             if let Some(name) = e.file_name().to_str() {
-                listing.push_str(&format!("- {}\n", name));
+                let _ = writeln!(listing, "- {name}");
             }
         }
         listing.push_str(

@@ -17,7 +17,7 @@ pub struct Args {
     pub(crate) memory_dir: Option<PathBuf>,
 
     /// Required project root. Every path the tools touch (grep/find
-    /// directory, cat file_path) is canonicalized and must be within
+    /// directory, cat `file_path`) is canonicalized and must be within
     /// this directory; anything outside is rejected. Symlinks in input
     /// paths are resolved before the check, so a symlink pointing out
     /// of the project is also rejected.

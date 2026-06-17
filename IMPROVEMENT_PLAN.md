@@ -206,10 +206,10 @@ deserialization) and `tools.rs` (grep/find/cat). There are no tests for:
     result but the `match` is only used for its pattern — this is confusing.
 
 **Actions:**
-- [ ] Run `cargo clippy -- -W clippy::all -W clippy::pedantic` and fix findings.
-- [ ] Replace the `let _ = match …` with a simple `let separator = "-"` (the
+- [x] Run `cargo clippy -- -W clippy::all -W clippy::pedantic` and fix findings.
+- [x] Replace the `let _ = match …` with a simple `let separator = "-"` (the
       match arms all return the same value).
-- [ ] Use `write!` instead of `format!` + `push_str` in hot paths to avoid
+- [x] Use `write!` instead of `format!` + `push_str` in hot paths to avoid
       intermediate allocations.
 
 ---

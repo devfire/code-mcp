@@ -47,7 +47,7 @@ pub async fn reap_loop(
     ticker.tick().await; // first tick fires immediately; skip it
     loop {
         tokio::select! {
-            _ = cancel.cancelled() => return,
+            () = cancel.cancelled() => return,
             _ = ticker.tick() => {
                 sweep(&manager, &tracker, idle_timeout).await;
             }
