@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::path::PathBuf;
 
 use rmcp::{
@@ -152,12 +153,13 @@ impl ServerHandler for CodeMcpServer {
         let mut instructions = String::from(
             "code-mcp: filesystem search and read tools.\n\n",
         );
-        instructions.push_str(&format!(
+        let _ = write!(
+            instructions,
             "All paths are scoped to the project root: {}. \
 Paths outside this directory (or symlinks resolving outside it) are rejected \
 with `invalid_params`.\n\n",
             self.scope.root().display()
-        ));
+        );
         instructions.push_str(
             "\
 Regex flavor: Rust `regex` crate. No lookaround or backreferences. \

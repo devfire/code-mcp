@@ -12,10 +12,11 @@ impl Scope {
     /// Build a scope. The root must exist and be a directory. It is
     /// canonicalized at construction time so symlinks inside the
     /// configured path are resolved once.
-    pub fn new(root: PathBuf) -> Result<Self, AppError> {
-        let canon = root.canonicalize().map_err(|e| {
-            AppError::Internal(format!("--project {}: {}", root.display(), e))
-        })?;
+    pub fn new(root: impl AsRef<Path>) -> Result<Self, AppError> {
+        let root = root.as_ref();
+        let canon = root
+            .canonicalize()
+            .map_err(|e| AppError::Internal(format!("--project {}: {}", root.display(), e)))?;
         if !canon.is_dir() {
             return Err(AppError::Internal(format!(
                 "--project must be a directory: {}",

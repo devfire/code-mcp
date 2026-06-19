@@ -5,11 +5,13 @@ use thiserror::Error;
 /// Convert a `tokio::task::JoinError` (from `spawn_blocking`) into an
 /// `rmcp::ErrorData` with `internal_error` code. Used by every tool handler
 /// so the `.map_err` boilerplate is a single call.
+///
+/// Takes `JoinError` by value so it can be passed directly as
+/// `.map_err(join_error)` — `JoinError` is not `Clone`, and the only
+/// field we need is accessed via `&self`.
+#[allow(clippy::needless_pass_by_value)]
 pub fn join_error(e: tokio::task::JoinError) -> ErrorData {
-    ErrorData::internal_error(
-        "internal_error",
-        Some(json!({"error": e.to_string()})),
-    )
+    ErrorData::internal_error("internal_error", Some(json!({"error": e.to_string()})))
 }
 
 /// Convenience alias for tool handler return types.

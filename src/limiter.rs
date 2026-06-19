@@ -32,7 +32,7 @@ impl PeerLimiter {
 
     /// Convenience: a per-minute rate (capacity = `rate`, refill = `rate`/60s).
     pub fn per_minute(rate: u32) -> Self {
-        let cap = rate.max(1) as f64;
+        let cap = f64::from(rate.max(1));
         Self::new(cap, cap / 60.0, 4096)
     }
 

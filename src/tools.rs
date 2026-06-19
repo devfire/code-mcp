@@ -1,7 +1,7 @@
 use crate::error::AppError;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{
-    BinaryDetection, Searcher, SearcherBuilder, Sink, SinkContext, SinkContextKind, SinkMatch,
+    BinaryDetection, Searcher, SearcherBuilder, Sink, SinkContext, SinkMatch,
 };
 use ignore::{WalkBuilder, WalkState};
 use regex::Regex;
@@ -9,6 +9,7 @@ use rmcp::model::CallToolResult;
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::mem;
@@ -38,7 +39,7 @@ pub struct ToolResponse {
     pub content: String,
     /// Whether the output was truncated due to a size cap.
     pub truncated: bool,
-    /// If truncated, the reason (e.g. "byte_cap", "line_cap").
+    /// If truncated, the reason (e.g. "`byte_cap`", "`line_cap`").
     pub truncation_reason: Option<String>,
     /// Number of matches found (grep / find).
     pub match_count: Option<usize>,
@@ -98,13 +99,16 @@ impl OutputMode {
             "content" => Ok(Self::Content),
             "count" => Ok(Self::Count),
             other => Err(AppError::InvalidRequest(format!(
-                "unknown output_mode '{}'; expected one of: files_with_matches, content, count",
-                other
+                "unknown output_mode '{other}'; expected one of: files_with_matches, content, count"
             ))),
         }
     }
 }
 
+/// Configuration for the `grep` tool. The boolean fields are independent
+/// search/walker toggles; grouping them into enums would obscure the
+/// (flat) JSON contract exposed to MCP clients.
+#[allow(clippy::struct_excessive_bools)]
 pub struct GrepOptions {
     pub before_context: usize,
     pub after_context: usize,
@@ -135,6 +139,7 @@ impl Default for GrepOptions {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct FindOptions {
     pub max_results: usize,
     pub include_hidden: bool,
@@ -169,7 +174,7 @@ struct MatchSink<'a> {
     max_bytes: usize,
 }
 
-impl<'a> Sink for MatchSink<'a> {
+impl Sink for MatchSink<'_> {
     type Error = io::Error;
 
     fn matched(
@@ -187,8 +192,7 @@ impl<'a> Sink for MatchSink<'a> {
         }
         let line_num = mat.line_number().unwrap_or(0);
         let line = String::from_utf8_lossy(mat.bytes());
-        self.buf
-            .push_str(&format!("{}:{}: {}", self.path.display(), line_num, line));
+        let _ = write!(self.buf, "{}:{}: {}", self.path.display(), line_num, line);
         if !line.ends_with('\n') {
             self.buf.push('\n');
         }
@@ -206,19 +210,17 @@ impl<'a> Sink for MatchSink<'a> {
             return Ok(false);
         }
         // All context kinds use the same separator.
-        let _ = match ctx.kind() {
-            SinkContextKind::Before | SinkContextKind::After | SinkContextKind::Other => "-",
-        };
         let separator = "-";
         let line_num = ctx.line_number().unwrap_or(0);
         let line = String::from_utf8_lossy(ctx.bytes());
-        self.buf.push_str(&format!(
+        let _ = write!(
+            self.buf,
             "{}{}{} {}",
             self.path.display(),
             separator,
             line_num,
             line
-        ));
+        );
         if !line.ends_with('\n') {
             self.buf.push('\n');
         }
@@ -239,7 +241,7 @@ struct FileMatchSink<'a> {
     matched_this_file: bool,
 }
 
-impl<'a> Sink for FileMatchSink<'a> {
+impl Sink for FileMatchSink<'_> {
     type Error = io::Error;
 
     fn matched(
@@ -317,15 +319,16 @@ fn record_first(slot: &Mutex<Option<String>>, msg: String) {
 // grep
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::needless_pass_by_value)]
 pub fn grep(
     directory: &str,
     pattern: &str,
     opts: GrepOptions,
 ) -> Result<ToolResponse, AppError> {
     match opts.output_mode {
-        OutputMode::Content => grep_content(directory, pattern, opts),
-        OutputMode::FilesWithMatches => grep_files(directory, pattern, opts),
-        OutputMode::Count => grep_count(directory, pattern, opts),
+        OutputMode::Content => grep_content(directory, pattern, &opts),
+        OutputMode::FilesWithMatches => grep_files(directory, pattern, &opts),
+        OutputMode::Count => grep_count(directory, pattern, &opts),
     }
 }
 
@@ -348,8 +351,7 @@ fn extension_matches(path: &Path, extensions: &[String]) -> bool {
     }
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| extensions.iter().any(|w| w == e))
-        .unwrap_or(false)
+        .is_some_and(|e| extensions.iter().any(|w| w == e))
 }
 
 /// Collect shared error state into the final `ToolResponse` metadata fields.
@@ -371,10 +373,11 @@ fn error_metadata(
 
 /// `content` mode — the original behaviour: emit matching lines with line
 /// numbers, streaming through the mpsc pipeline.
+#[allow(clippy::too_many_lines)]
 fn grep_content(
     directory: &str,
     pattern: &str,
-    opts: GrepOptions,
+    opts: &GrepOptions,
 ) -> Result<ToolResponse, AppError> {
     let matcher: RegexMatcher = RegexMatcherBuilder::new()
         .case_insensitive(opts.case_insensitive)
@@ -398,7 +401,7 @@ fn grep_content(
 
     let extensions = opts.file_extensions.clone();
 
-    let walker = build_parallel_walker(directory, &opts);
+    let walker = build_parallel_walker(directory, opts);
 
     let (tx, rx) = channel::<String>();
 
@@ -520,10 +523,11 @@ fn grep_content(
 
 /// `files_with_matches` mode — emit the file path on the first match, then
 /// abort searching that file. `max_results` caps the number of *files*.
+#[allow(clippy::too_many_lines)]
 fn grep_files(
     directory: &str,
     pattern: &str,
-    opts: GrepOptions,
+    opts: &GrepOptions,
 ) -> Result<ToolResponse, AppError> {
     let matcher: RegexMatcher = RegexMatcherBuilder::new()
         .case_insensitive(opts.case_insensitive)
@@ -546,7 +550,7 @@ fn grep_files(
 
     let extensions = opts.file_extensions.clone();
 
-    let walker = build_parallel_walker(directory, &opts);
+    let walker = build_parallel_walker(directory, opts);
 
     let (tx, rx) = channel::<String>();
 
@@ -662,7 +666,7 @@ fn grep_files(
 fn grep_count(
     directory: &str,
     pattern: &str,
-    opts: GrepOptions,
+    opts: &GrepOptions,
 ) -> Result<ToolResponse, AppError> {
     let matcher: RegexMatcher = RegexMatcherBuilder::new()
         .case_insensitive(opts.case_insensitive)
@@ -687,7 +691,7 @@ fn grep_count(
     // Shared map: canonical path string → match count.
     let file_counts: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
 
-    let walker = build_parallel_walker(directory, &opts);
+    let walker = build_parallel_walker(directory, opts);
 
     walker.run(|| {
         let entry_errors = Arc::clone(&entry_errors);
@@ -729,7 +733,9 @@ fn grep_count(
 
             if sink.count > 0 {
                 let key = path.to_string_lossy().into_owned();
-                let mut map = file_counts.lock().unwrap_or_else(|e| e.into_inner());
+                let mut map = file_counts
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 *map.entry(key).or_insert(0) += sink.count;
             }
 
@@ -738,7 +744,9 @@ fn grep_count(
     });
 
     // Sort by path for deterministic output.
-    let mut counts_map = file_counts.lock().unwrap_or_else(|e| e.into_inner());
+    let mut counts_map = file_counts
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut entries: Vec<_> = counts_map.drain().collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -753,7 +761,7 @@ fn grep_count(
 
     let mut output = String::new();
     for (path, count) in &entries {
-        let line = format!("{}: {}\n", path, count);
+        let line = format!("{path}: {count}\n");
         if output.len() + line.len() > max_bytes {
             break;
         }
@@ -793,7 +801,6 @@ pub fn find(
 ) -> Result<ToolResponse, AppError> {
     let re = Regex::new(pattern)?;
     let max_results = opts.max_results;
-
     let count = Arc::new(AtomicUsize::new(0));
     let entry_errors = Arc::new(AtomicUsize::new(0));
     let first_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
