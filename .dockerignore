@@ -1,0 +1,7 @@
+target/
+.git/
+.github/
+.claude/
+.serena/
+IMPROVEMENT_PLAN.md
+README.md
