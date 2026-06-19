@@ -28,14 +28,21 @@ const fn default_true() -> bool {
 // StringOrVec — accepts a single string or an array of strings
 // ---------------------------------------------------------------------------
 
+/// Serde helper accepting either a single string or an array of strings.
+/// Used by `GrepArgs::file_extensions` so MCP clients can pass either
+/// `"sql"` or `["rs", "toml"]`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum StringOrVec {
+    /// A single extension string.
     One(String),
+    /// An array of extension strings.
     Many(Vec<String>),
 }
 
 impl StringOrVec {
+    /// Normalize into a `Vec<String>` regardless of which variant was
+    /// deserialized.
     pub fn into_vec(self) -> Vec<String> {
         match self {
             StringOrVec::One(s) => vec![s],

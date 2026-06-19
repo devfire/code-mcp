@@ -110,15 +110,26 @@ impl OutputMode {
 /// (flat) JSON contract exposed to MCP clients.
 #[allow(clippy::struct_excessive_bools)]
 pub struct GrepOptions {
+    /// Lines of context to emit before each match (`content` mode only).
     pub before_context: usize,
+    /// Lines of context to emit after each match (`content` mode only).
     pub after_context: usize,
+    /// Exact cap on results. For `files_with_matches`/`count` this caps the
+    /// number of files; for `content` it caps the number of matching lines.
     pub max_results: usize,
+    /// Case-insensitive matching (equivalent to a `(?i)` prefix on the pattern).
     pub case_insensitive: bool,
+    /// Include hidden files and directories in the walk.
     pub include_hidden: bool,
+    /// Follow symbolic links during the walk.
     pub follow_symlinks: bool,
+    /// Respect `.gitignore` / global / exclude gitignore rules.
     pub respect_gitignore: bool,
+    /// Restrict search to files with these extensions (empty = all files).
     pub file_extensions: Vec<String>,
+    /// Hard cap on total response size in bytes.
     pub max_bytes: usize,
+    /// What to emit for each match (see [`OutputMode`]).
     pub output_mode: OutputMode,
 }
 
@@ -139,11 +150,17 @@ impl Default for GrepOptions {
     }
 }
 
+/// Configuration for the `find` tool.
 #[derive(Clone, Copy)]
 pub struct FindOptions {
+    /// Exact cap on the number of matching paths returned.
     pub max_results: usize,
+    /// Include hidden files and directories in the walk.
     pub include_hidden: bool,
+    /// Respect `.gitignore` / global / exclude gitignore rules.
     pub respect_gitignore: bool,
+    /// When `true` (default), match the regex against the file's basename;
+    /// when `false`, match against the full path.
     pub match_basename: bool,
 }
 
@@ -319,6 +336,16 @@ fn record_first(slot: &Mutex<Option<String>>, msg: String) {
 // grep
 // ---------------------------------------------------------------------------
 
+/// Regex search across files using parallel directory traversal
+/// (`ignore` + `grep-searcher`).
+///
+/// Dispatches to [`grep_content`], [`grep_files`], or [`grep_count`] based on
+/// `opts.output_mode`. All modes share the same parallel walker, thread-local
+/// buffer + mpsc pipeline, and exact `max_results` capping; only what gets
+/// written to the buffer differs.
+///
+/// Walker entry errors and per-file search errors are tallied and surfaced in
+/// the returned [`ToolResponse`] metadata rather than aborting the search.
 #[allow(clippy::needless_pass_by_value)]
 pub fn grep(
     directory: &str,
@@ -794,6 +821,12 @@ fn grep_count(
 // find
 // ---------------------------------------------------------------------------
 
+/// Find files by regex. Matches the basename by default; set
+/// `opts.match_basename = false` to match against the full path.
+///
+/// Uses a parallel `ignore` walker (gitignore-aware) and an `AtomicUsize`
+/// counter for exact `max_results` capping. Walker entry errors are tallied
+/// and surfaced in the returned [`ToolResponse`] metadata.
 pub fn find(
     directory: &str,
     pattern: &str,
@@ -898,6 +931,16 @@ pub fn find(
 // cat
 // ---------------------------------------------------------------------------
 
+/// Read file contents with pagination.
+///
+/// Skips `offset` lines (0-based), then reads up to `max_lines` lines or
+/// `max_bytes` bytes, whichever is hit first. Byte-cap cuts are performed on
+/// UTF-8 character boundaries so the output is always valid UTF-8. Truncation
+/// is reported via the returned [`ToolResponse`]'s `truncated` /
+/// `truncation_reason` fields (`line_cap` or `byte_cap`).
+///
+/// Returns [`AppError::InvalidRequest`] if the target is missing or not a
+/// regular file.
 pub fn cat(
     file_path: &str,
     offset: usize,

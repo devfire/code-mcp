@@ -220,11 +220,11 @@ deserialization) and `tools.rs` (grep/find/cat). There are no tests for:
 docs, no `///` doc comments on public API in `tools.rs`.
 
 **Actions:**
-- [ ] Add `//!` crate-level doc to `lib.rs` or `main.rs` explaining the
+- [x] Add `//!` crate-level doc to `lib.rs` or `main.rs` explaining the
       project's purpose and architecture.
-- [ ] Add `///` doc comments to all public functions in `tools.rs`, `scope.rs`,
+- [x] Add `///` doc comments to all public functions in `tools.rs`, `scope.rs`,
       `gate.rs`, `limiter.rs`, `reaper.rs`.
-- [ ] Update `README.md` with build/run instructions, CLI args, and tool
+- [x] Update `README.md` with build/run instructions, CLI args, and tool
       descriptions.
 
 ---

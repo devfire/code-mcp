@@ -21,6 +21,9 @@ impl ActivityTracker {
         Self::default()
     }
 
+    /// Record activity for the given session id (called by the gate middleware
+    /// on every request that carries a session id). Updates the last-seen
+    /// timestamp to `Instant::now()`.
     pub async fn touch(&self, id: SessionId) {
         self.inner.write().await.insert(id, Instant::now());
     }

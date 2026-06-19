@@ -14,6 +14,13 @@ use crate::memory::load_memory;
 use crate::scope::Scope;
 use crate::tools::{self, OutputMode};
 
+/// The MCP server handler. Owns the tool router, the optional memory dir,
+/// the extra instructions loaded at startup, and the filesystem [`Scope`].
+///
+/// Constructed once per session by the `StreamableHttpService` closure in
+/// `main` (so each session gets its own cheap `Clone` of the `Scope` and
+/// config). All tool handlers run their blocking work in `spawn_blocking`
+/// and delegate to [`crate::tools`].
 #[derive(Clone)]
 pub struct CodeMcpServer {
     tool_router: rmcp::handler::server::router::tool::ToolRouter<Self>,
@@ -23,6 +30,9 @@ pub struct CodeMcpServer {
 }
 
 impl CodeMcpServer {
+    /// Construct a new server instance. `extra_instructions` is the contents
+    /// of `<memory-dir>/instructions.md` (loaded once at startup) and is
+    /// appended to the `InitializeResult.instructions` payload.
     pub fn new(
         memory_dir: Option<PathBuf>,
         extra_instructions: Option<String>,
