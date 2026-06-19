@@ -17,6 +17,14 @@ Re-uses ripgrep crates just like ripgrep itself.
 ### Pre-built binaries
 Download the latest release from the [Releases page](https://github.com/devfire/code-mcp/releases).
 
+### Docker (GHCR)
+```bash
+docker pull ghcr.io/devfire/code-mcp:latest
+docker run -p 8080:8080 -v /path/to/repo:/project:ro ghcr.io/devfire/code-mcp
+```
+
+Multi-arch images (`linux/amd64`, `linux/arm64`) are published automatically on every release.
+
 ### From source
 ```bash
 cargo install --git https://github.com/devfire/code-mcp.git
