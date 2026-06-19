@@ -19,11 +19,22 @@ use crate::reaper::ActivityTracker;
 const SESSION_ID_HEADER: &str = "mcp-session-id";
 
 /// Shared state for the [`gate`] middleware.
+///
+/// Held in an `Arc` and passed to the middleware via `from_fn_with_state`.
+/// Fields are `pub` because the middleware closure reads them directly; the
+/// type is constructed once in `main` and never mutated thereafter.
 pub struct GateCtx {
+    /// The rmcp session manager — used to read the live session count for the
+    /// `--max-sessions` cap.
     pub sessions: Arc<LocalSessionManager>,
+    /// Hard cap on concurrent stateful sessions.
     pub max_sessions: usize,
+    /// Per-peer token-bucket limiter for new initialize POSTs.
     pub limiter: PeerLimiter,
+    /// Whether to trust `X-Forwarded-For` (rightmost entry) as the peer IP.
     pub trust_forwarded_for: bool,
+    /// Per-session last-activity timestamps, bumped by the gate and read by
+    /// the reaper.
     pub activity: Arc<ActivityTracker>,
 }
 

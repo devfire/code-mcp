@@ -13,6 +13,8 @@ pub struct PeerLimiter {
     evict_threshold: usize,
 }
 
+/// A single peer's token-bucket state: current token count and the instant of
+/// the last `try_consume` (used to compute refill on the next call).
 #[derive(Clone, Copy)]
 struct Bucket {
     tokens: f64,
@@ -64,6 +66,9 @@ impl PeerLimiter {
         }
     }
 
+    /// The idle duration after which a peer's bucket is considered stale and
+    /// eligible for eviction. Set to twice the time it takes to fully refill
+    /// an empty bucket, so a peer that briefly goes idle isn't dropped.
     fn stale_after(&self) -> Duration {
         // Twice the time it takes to fully refill an empty bucket.
         Duration::from_secs_f64((self.capacity / self.refill_per_sec) * 2.0)

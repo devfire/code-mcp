@@ -1,12 +1,22 @@
 # code-mcp
 
-A streamable-HTTP MCP server that exposes fast filesystem search and read tools (`grep`, `find`, `cat`) to LLM clients.
+A streamable-HTTP MCP server that exposes fast filesystem search and read tools (`grep`, `find`, `cat`, `memories`) to LLM clients.
 
 The point: Claude Code's local MCP support is stdio-only. This server speaks streamable HTTP so a single instance running on a dev box can be reached over the LAN by Claude Code, Cursor, Zed, or any other MCP client that supports HTTP transport.
 
 > [!WARNING]
 > Authentication & Authorization are outside the scope of this project. **Run this on a private LAN only.** Anyone who can reach the bind address can use the tools. `--project` scopes what they can read. Run this with `chroot` for extra jailing.
 > NOTE: https://modelcontextprotocol.io/docs/tutorials/security/authorization is what you should be using regardless.
+
+## Installation
+
+### Pre-built binaries
+Download the latest release from the [Releases page](https://github.com/devfire/code-mcp/releases).
+
+### From source
+```bash
+cargo install --git https://github.com/devfire/code-mcp.git
+
 
 ## Tools
 
@@ -92,7 +102,7 @@ Flags:
 - `--memory-dir <path>` — optional. If set, enables the `memories` tool and reads `<path>/instructions.md` (if present) into the `InitializeResult.instructions` payload sent to the model on connect.
 - `--max-sessions <N>` — default `64`. Hard cap on concurrent stateful sessions in the rmcp `LocalSessionManager`. New initialize POSTs are rejected with `503 Service Unavailable` + `Retry-After: 5` once the cap is met. Existing-session traffic (any POST carrying `Mcp-Session-Id`) passes through untouched.
 - `--initialize-rate-per-min <R>` — default `12`. Per-peer cap on **new** initialize requests, expressed as a per-minute token bucket (capacity = `R`, refilling continuously over 60 s). When exhausted, new initializes from that peer return `429 Too Many Requests` + `Retry-After: <secs>`. A misconfigured client that reconnects in a tight loop gets throttled here instead of pinning unbounded session state. Default `12`/min ≈ one fresh session every 5 s sustained — well above any healthy reconnect rate.
-- `--trust-forwarded-for` — default `false`. When set, the gate uses the leftmost entry of `X-Forwarded-For` as the peer IP for rate-limiting. Only enable when the server sits behind a reverse proxy you control; the header is forgeable by any direct client.
+- `--trust-forwarded-for` — default `false`. When set, the gate uses the rightmost entry of `X-Forwarded-For` as the peer IP for rate-limiting. This assumes a single trusted proxy hop (e.g. AWS ALB) that appends the real client IP; entries to the left of the last hop are client-supplied and forgeable. Only enable when the server sits behind a reverse proxy you control.
 - `--session-idle-timeout-secs <N>` — default `1800` (30 min). Idle timeout for stateful sessions. A background reaper task closes any session whose last observed request is older than this, so abandoned clients (process killed, network gone, no DELETE sent) don't pin slots against `--max-sessions` indefinitely. The cap defends against bursts; the reaper handles long-lived zombies.
 - `--session-sweep-interval-secs <N>` — default `60`. How often the reaper sweeps for idle sessions.
 

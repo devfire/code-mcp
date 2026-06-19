@@ -1,3 +1,43 @@
+//! # code-mcp
+//!
+//! A streamable-HTTP MCP server that exposes fast filesystem search and read
+//! tools (`grep`, `find`, `cat`, `memories`) to LLM clients.
+//!
+//! ## Why
+//!
+//! Claude Code's local MCP support is stdio-only. This server speaks
+//! streamable HTTP so a single instance running on a dev box can be reached
+//! over the LAN by Claude Code, Cursor, Zed, or any other MCP client that
+//! supports HTTP transport.
+//!
+//! ## Architecture
+//!
+//! The binary is split into focused modules:
+//!
+//! - [`cli`] — clap arg parsing (`Args`).
+//! - [`scope`] — filesystem scope enforcement. Every path the tools touch is
+//!   canonicalized and required to lie under `--project`; symlinks resolving
+//!   outside the root are rejected.
+//! - [`server`] — the `CodeMcpServer` `ServerHandler` impl and `#[tool_router]`
+//!   wiring for `grep` / `find` / `cat` / `memories`.
+//! - [`tools`] — the actual search/read implementations (parallel walkers,
+//!   `grep-searcher` sinks, `ToolResponse` structured output).
+//! - [`args`] — serde `JsonSchema` arg structs for each tool, with
+//!   `#[serde(default)]`-driven defaults.
+//! - [`memory`] — loads persisted memory files from `--memory-dir`.
+//! - [`gate`] — axum middleware that caps concurrent sessions and rate-limits
+//!   new initialize POSTs per peer.
+//! - [`limiter`] — per-peer token-bucket rate limiter used by [`gate`].
+//! - [`reaper`] — background task that closes idle sessions so abandoned
+//!   clients don't pin slots against `--max-sessions`.
+//! - [`error`] — `AppError` (thiserror) and conversion to `rmcp::ErrorData`.
+//!
+//! ## Security
+//!
+//! Authentication & Authorization are out of scope. Run on a private LAN only.
+//! `--project` scopes what clients can read; anything outside is rejected with
+//! `invalid_params`. See <https://modelcontextprotocol.io/docs/tutorials/security/authorization>.
+
 mod args;
 mod error;
 mod gate;

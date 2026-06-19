@@ -2,6 +2,11 @@ use std::path::PathBuf;
 use clap::Parser;
 use std::net::SocketAddr;
 
+/// Command-line arguments for `code-mcp`.
+///
+/// Parsed via clap. All fields are `pub(crate)` because they're only consumed
+/// by `main`; the struct itself is `pub` so it can be referenced from other
+/// crate modules.
 #[derive(Debug, Parser)]
 #[command(name = "code-mcp", about = "Streamable HTTP MCP server for code search/read tools")]
 pub struct Args {

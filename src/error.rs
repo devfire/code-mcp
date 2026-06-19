@@ -17,6 +17,10 @@ pub fn join_error(e: tokio::task::JoinError) -> ErrorData {
 /// Convenience alias for tool handler return types.
 pub type ToolResult<T> = Result<T, ErrorData>;
 
+/// Application-level error type. Variants map to MCP error codes via the
+/// `From<AppError> for ErrorData` impl below: user-facing failures
+/// (bad regex, scope violations, not-found) become `invalid_params`, while
+/// infrastructure failures (I/O, ignore, axum) become `internal_error`.
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("I/O error: {0}")]
