@@ -115,6 +115,40 @@ cargo build --release
 ./target/release/code-mcp --bind 0.0.0.0:8080 --project ./my/repo
 ```
 
+### Docker
+
+The included `Dockerfile` uses a multi-stage build with `cargo-chef` for optimal layer caching. The final image is based on `debian:bookworm-slim` (~80 MB) and contains only the stripped binary and `git` (needed by the `ignore` crate for `.gitignore` traversal).
+
+```sh
+# Build
+docker build -t code-mcp .
+
+# Run with defaults (bind 0.0.0.0:8080, project /project)
+docker run -p 8080:8080 -v /path/to/repo:/project:ro code-mcp
+
+# Override any flag — all CLI args are supported natively via ENTRYPOINT
+docker run -p 9090:9090 \
+  -v /path/to/repo:/src:ro \
+  -v /path/to/memories:/memories:ro \
+  code-mcp \
+  --bind 0.0.0.0:9090 \
+  --project /src \
+  --memory-dir /memories \
+  --max-sessions 128 \
+  --initialize-rate-per-min 20 \
+  --session-idle-timeout-secs 3600
+
+# With debug logging
+docker run -p 8080:8080 -e RUST_LOG=debug,rmcp=info \
+  -v /path/to/repo:/project:ro code-mcp
+```
+
+The `ENTRYPOINT` is the binary itself, so any arguments after the image name replace the default `CMD` and go directly to clap. Pass `--help` to see all options:
+
+```sh
+docker run --rm code-mcp --help
+```
+
 Flags:
 
 - `--bind <addr:port>` — default `0.0.0.0:8080`.
