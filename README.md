@@ -8,6 +8,16 @@ The point: Claude Code's local MCP support is stdio-only. This server speaks str
 > Authentication & Authorization are outside the scope of this project. **Run this on a private LAN only.** Anyone who can reach the bind address can use the tools. `--project` scopes what they can read. Run this with `chroot` for extra jailing.
 > NOTE: https://modelcontextprotocol.io/docs/tutorials/security/authorization is what you should be using regardless.
 
+## Installation
+
+### Pre-built binaries
+Download the latest release from the [Releases page](https://github.com/devfire/code-mcp/releases).
+
+### From source
+```bash
+cargo install --git https://github.com/devfire/code-mcp.git
+
+
 ## Tools
 
 All tools return structured `ToolResponse` objects with metadata (truncation status, error counts, match counts) rather than plain strings. This allows clients to programmatically detect truncation and other conditions.
