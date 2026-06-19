@@ -10,6 +10,8 @@ The point: Claude Code's local MCP support is stdio-only. This server speaks str
 
 ## Tools
 
+All tools return structured `ToolResponse` objects with metadata (truncation status, error counts, match counts) rather than plain strings. This allows clients to programmatically detect truncation and other conditions.
+
 ### `grep`
 Regex search across files using parallel directory traversal (`ignore` + `grep-searcher`).
 
@@ -17,17 +19,23 @@ Regex search across files using parallel directory traversal (`ignore` + `grep-s
 | -------------------- | --------------- | ------- | ----------------------------------------------------------- |
 | `directory`          | `string`        | —       | required                                                    |
 | `pattern`            | `string`        | —       | required; Rust `regex` flavor — no lookaround/backrefs      |
-| `before_context`     | `int`           | `0`     |                                                             |
-| `after_context`      | `int`           | `0`     |                                                             |
-| `max_results`        | `int`           | `100`   | exact cap (no over-shoot)                                   |
+| `output_mode`        | `string`        | `files_with_matches` | `files_with_matches` (list matching files; fast for broad scans), `content` (matching lines with context), or `count` (per-file match tally) |
+| `before_context`     | `int`           | `0`     | lines of context before matches (ignored in `files_with_matches` and `count` modes) |
+| `after_context`      | `int`           | `0`     | lines of context after matches (ignored in `files_with_matches` and `count` modes) |
+| `max_results`        | `int`           | `100`   | exact cap (no over-shoot); for `files_with_matches`, caps the number of files; for `content`, caps the number of matching lines; for `count`, caps the number of files |
 | `case_insensitive`   | `bool`          | `false` | equivalent to `(?i)` prefix in `pattern`                    |
 | `include_hidden`     | `bool`          | `false` |                                                             |
 | `follow_symlinks`    | `bool`          | `false` |                                                             |
 | `respect_gitignore`  | `bool`          | `true`  |                                                             |
 | `file_extensions`    | `string[]`      | `[]`    | e.g. `["rs", "toml"]`; empty = all                          |
-| `max_bytes`          | `int`           | ~5 MiB  | hard cap on response size; appends `[truncated: byte cap]`  |
+| `max_bytes`          | `int`           | ~5 MiB  | hard cap on response size                                   |
 
-Walker errors and search errors are tallied and reported as a `[notice: N entry errors, M search errors; first: ...]` footer rather than silently dropped.
+**Output modes:**
+- **`files_with_matches`** (default): Returns only file paths that contain matches. Each path appears once (on first match), then the file's search stops early — efficient for broad reconnaissance queries. `max_results` caps the number of files.
+- **`content`**: Returns matching lines with optional context (before/after). The classic grep output mode, useful when line-level detail is needed. `max_results` caps the number of lines.
+- **`count`**: Returns per-file match tallies as `path: N` lines, sorted by path. Useful for understanding distribution of matches across files.
+
+Walker errors and search errors are tallied and returned in the response metadata rather than silently dropped.
 
 ### `find`
 Find files by regex.
@@ -65,10 +73,10 @@ Read file contents with pagination.
 | ----------- | -------- | ------- | -------------------------------------------------------------------- |
 | `file_path` | `string` | —       | required                                                             |
 | `offset`    | `int`    | `0`     | 0-based line number to start from                                    |
-| `max_lines` | `int`    | `2000`  | appends `[truncated: line cap]` if more lines remain                 |
-| `max_bytes` | `int`    | ~5 MiB  | appends `[truncated: byte cap]` if hit mid-line (UTF-8-safe cut)     |
+| `max_lines` | `int`    | `2000`  | maximum lines to return per call                                     |
+| `max_bytes` | `int`    | ~5 MiB  | hard cap on response size (UTF-8-safe cut at line boundary)          |
 
-Use `offset` to page: if the response ends with `[truncated: line cap]`, call again with `offset = previous_offset + max_lines`.
+Use `offset` to page through large files: if the response indicates truncation, call again with `offset = previous_offset + max_lines`. The response will include metadata indicating whether the result was truncated and the reason.
 
 ## Build & run
 
