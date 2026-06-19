@@ -2,7 +2,11 @@
 
 A streamable-HTTP code intelligence MCP server for LLM clients.
 
-The point: offer a network-based code insights for both humans & machines. Although probably more suitable for humans (talk to your code) rather than specific compiler-based code insights like those of Serena. Able to handle very large codebases. Re-uses ripgrep crates just like ripgrep itself.
+The point: offer a network-based code insights for both humans & machines. Although probably more suitable for humans (talk to your code) rather than specific compiler-based code insights like those of Serena. 
+
+Able to handle very large codebases. 
+
+Re-uses ripgrep crates just like ripgrep itself.
 
 > [!WARNING]
 > Authentication & Authorization are outside the scope of this project. **Run this on a private LAN only.** Anyone who can reach the bind address can use the tools. `--project` scopes what they can read. Run this with `chroot` for extra jailing.
