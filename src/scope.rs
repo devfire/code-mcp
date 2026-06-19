@@ -62,7 +62,7 @@ mod tests {
     fn check_accepts_path_inside_root() -> TestResult {
         let td = TempDir::new()?;
         fs::write(td.path().join("a.txt"), "x")?;
-        let s = Scope::new(td.path().to_path_buf())?;
+        let s = Scope::new(td.path())?;
         let canon = s.check(td.path().join("a.txt"))?;
         assert!(canon.ends_with("a.txt"), "got {}", canon.display());
         Ok(())
@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn check_rejects_path_outside_root() -> TestResult {
         let td = TempDir::new()?;
-        let s = Scope::new(td.path().to_path_buf())?;
+        let s = Scope::new(td.path())?;
         match s.check("/etc/passwd") {
             Err(AppError::OutOfScope(_)) => Ok(()),
             other => Err(format!("expected OutOfScope, got {:?}", other).into()),
@@ -89,7 +89,7 @@ mod tests {
         let link = td.path().join("link.txt");
         std::os::unix::fs::symlink(&target, &link)?;
 
-        let s = Scope::new(td.path().to_path_buf())?;
+        let s = Scope::new(td.path())?;
         match s.check(&link) {
             Err(AppError::OutOfScope(_)) => Ok(()),
             other => Err(format!("expected OutOfScope, got {:?}", other).into()),
@@ -100,7 +100,7 @@ mod tests {
     fn check_rejects_path_traversal() -> TestResult {
         // Even ../.. style paths get canonicalized before the prefix check.
         let td = TempDir::new()?;
-        let s = Scope::new(td.path().to_path_buf())?;
+        let s = Scope::new(td.path())?;
         let traversal = td.path().join("..").join("..");
         match s.check(&traversal) {
             // canonicalize-resolves to a directory that is not under root.
