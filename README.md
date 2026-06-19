@@ -1,8 +1,8 @@
 # code-mcp
 
-A streamable-HTTP MCP server that exposes fast filesystem search and read tools (`grep`, `find`, `cat`, `memories`) to LLM clients.
+A streamable-HTTP code intelligence MCP server for LLM clients.
 
-The point: Claude Code's local MCP support is stdio-only. This server speaks streamable HTTP so a single instance running on a dev box can be reached over the LAN by Claude Code, Cursor, Zed, or any other MCP client that supports HTTP transport.
+The point: offer a network-based code insights for both humans & machines. Although probably more suitable for humans (talk to your code) rather than specific compiler-based code insights like those of Serena. Able to handle very large codebases. Re-uses ripgrep crates just like ripgrep itself.
 
 > [!WARNING]
 > Authentication & Authorization are outside the scope of this project. **Run this on a private LAN only.** Anyone who can reach the bind address can use the tools. `--project` scopes what they can read. Run this with `chroot` for extra jailing.
@@ -16,6 +16,7 @@ Download the latest release from the [Releases page](https://github.com/devfire/
 ### From source
 ```bash
 cargo install --git https://github.com/devfire/code-mcp.git
+```
 
 
 ## Tools
