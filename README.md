@@ -19,15 +19,19 @@ cargo install --git https://github.com/devfire/code-mcp.git
 ```
 ## FAQ
 Q: You think you can vibe code some nonsense, yolo it into Github and somehow that makes you an expert on code intelligence?
+
 A: This was built almost entirely by CC, so what, it's 2026, get with the times. However, unlike a purely vibe coded "nonsense" (i.e. look, ma - I did a chat app on localhost RIP slack) I happen to know Rust well, so everything here has been human validated and approved accordingly.
 
 Q: WTF is this - ever heard of Serena MCP?
-A: Yes but this is very different. Serena uses the power of language servers & therefore compilers to answer questions. It is incredibly powerful but also really slow and can handle a reasonable number of projects at a time. Serena struggles with large mono repos with 100s of sub repos. This go through 100s of repos like knife through butter.
+
+A: Yes but this is very different. Serena uses the power of language servers & therefore compilers to answer questions. It is incredibly powerful but also really slow and can handle a reasonable number of projects at a time. Serena struggles with large mono repos with 100s of sub repos. This goes through 100s of repos like knife through butter.
 
 Q: How can you get any intelligence out of `cat`, `find`, and `grep` - you mad?
+
 A: You'd be surprised! Modern SOTA models (Sonnet, GLM, Kimi, Codex, etc.) are **really** good at navigating large codebases, provided they have the tools to do so. This project gives them these tools.
 
 Q: No auth??
+
 A: No. Auth is hard and you shouldn't be relying on my auth anyway. MCP standard defines auth, use that.
 
 ## Tools
