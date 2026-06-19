@@ -1,7 +1,7 @@
 # ============================================================================
 # Stage 1: Chef — prepare recipe for dependency caching
 # ============================================================================
-FROM rust:1.87-slim AS chef
+FROM rust:1.95-slim AS chef
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
