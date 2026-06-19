@@ -16,6 +16,7 @@ Download the latest release from the [Releases page](https://github.com/devfire/
 ### From source
 ```bash
 cargo install --git https://github.com/devfire/code-mcp.git
+```
 
 
 ## Tools
