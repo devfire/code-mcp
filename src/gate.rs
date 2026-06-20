@@ -6,9 +6,7 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use rmcp::transport::streamable_http_server::session::{
-    SessionId, local::LocalSessionManager,
-};
+use rmcp::transport::streamable_http_server::session::{SessionId, local::LocalSessionManager};
 
 use crate::limiter::PeerLimiter;
 use crate::reaper::ActivityTracker;
@@ -107,7 +105,7 @@ fn peer_ip(headers: &HeaderMap, addr: SocketAddr, trust_xff: bool) -> IpAddr {
             .map(str::trim)
             .and_then(|s| s.parse::<IpAddr>().ok())
     {
-        tracing::info!(peer = %ip, socket = %addr.ip(), "resolved peer IP from X-Forwarded-For");
+        tracing::debug!(peer = %ip, socket = %addr.ip(), "resolved peer IP from X-Forwarded-For");
         return ip;
     }
     addr.ip()
@@ -155,7 +153,10 @@ mod tests {
             activity: Arc::new(ActivityTracker::new()),
         });
         let app = build_app(ctx);
-        let res = app.oneshot(req(Method::GET, dummy_addr(), false)).await.unwrap();
+        let res = app
+            .oneshot(req(Method::GET, dummy_addr(), false))
+            .await
+            .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
     }
 
@@ -170,7 +171,10 @@ mod tests {
             activity: Arc::new(ActivityTracker::new()),
         });
         let app = build_app(ctx);
-        let res = app.oneshot(req(Method::POST, dummy_addr(), true)).await.unwrap();
+        let res = app
+            .oneshot(req(Method::POST, dummy_addr(), true))
+            .await
+            .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
     }
 
@@ -184,7 +188,10 @@ mod tests {
             activity: Arc::new(ActivityTracker::new()),
         });
         let app = build_app(ctx);
-        let res = app.oneshot(req(Method::POST, dummy_addr(), false)).await.unwrap();
+        let res = app
+            .oneshot(req(Method::POST, dummy_addr(), false))
+            .await
+            .unwrap();
         assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(res.headers().get(header::RETRY_AFTER).unwrap(), "5");
     }
@@ -201,15 +208,26 @@ mod tests {
         let app = build_app(ctx);
 
         for _ in 0..2 {
-            let res = app.clone().oneshot(req(Method::POST, dummy_addr(), false)).await.unwrap();
+            let res = app
+                .clone()
+                .oneshot(req(Method::POST, dummy_addr(), false))
+                .await
+                .unwrap();
             assert_eq!(res.status(), StatusCode::OK);
         }
-        let res = app.clone().oneshot(req(Method::POST, dummy_addr(), false)).await.unwrap();
+        let res = app
+            .clone()
+            .oneshot(req(Method::POST, dummy_addr(), false))
+            .await
+            .unwrap();
         assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
         assert!(res.headers().get(header::RETRY_AFTER).is_some());
 
         // A different peer is unaffected.
-        let res = app.oneshot(req(Method::POST, other_addr(), false)).await.unwrap();
+        let res = app
+            .oneshot(req(Method::POST, other_addr(), false))
+            .await
+            .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
     }
 
@@ -217,7 +235,10 @@ mod tests {
     fn peer_ip_uses_socket_addr_by_default() {
         let h = HeaderMap::new();
         let addr: SocketAddr = "10.0.0.5:1234".parse().unwrap();
-        assert_eq!(peer_ip(&h, addr, false), IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)));
+        assert_eq!(
+            peer_ip(&h, addr, false),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))
+        );
     }
 
     #[test]
@@ -225,7 +246,10 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
         let addr: SocketAddr = "10.0.0.5:1234".parse().unwrap();
-        assert_eq!(peer_ip(&h, addr, false), IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)));
+        assert_eq!(
+            peer_ip(&h, addr, false),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))
+        );
     }
 
     #[test]
@@ -236,7 +260,10 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "1.2.3.4, 5.6.7.8".parse().unwrap());
         let addr: SocketAddr = "10.0.0.5:1234".parse().unwrap();
-        assert_eq!(peer_ip(&h, addr, true), IpAddr::V4(Ipv4Addr::new(5, 6, 7, 8)));
+        assert_eq!(
+            peer_ip(&h, addr, true),
+            IpAddr::V4(Ipv4Addr::new(5, 6, 7, 8))
+        );
     }
 
     #[test]
@@ -244,6 +271,9 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "garbage".parse().unwrap());
         let addr: SocketAddr = "10.0.0.5:1234".parse().unwrap();
-        assert_eq!(peer_ip(&h, addr, true), IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)));
+        assert_eq!(
+            peer_ip(&h, addr, true),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5))
+        );
     }
 }

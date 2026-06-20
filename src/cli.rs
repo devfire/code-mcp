@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use clap::Parser;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 /// Command-line arguments for `code-mcp`.
 ///
@@ -8,7 +8,10 @@ use std::net::SocketAddr;
 /// by `main`; the struct itself is `pub` so it can be referenced from other
 /// crate modules.
 #[derive(Debug, Parser)]
-#[command(name = "code-mcp", about = "Streamable HTTP MCP server for code search/read tools")]
+#[command(
+    name = "code-mcp",
+    about = "Streamable HTTP MCP server for code search/read tools"
+)]
 pub struct Args {
     /// Address to bind, e.g. 0.0.0.0:8080
     #[arg(long, default_value = "0.0.0.0:8080")]

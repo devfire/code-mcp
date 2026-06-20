@@ -39,6 +39,7 @@
 //! `invalid_params`. See <https://modelcontextprotocol.io/docs/tutorials/security/authorization>.
 
 mod args;
+mod cli;
 mod error;
 mod gate;
 mod limiter;
@@ -47,26 +48,23 @@ mod reaper;
 mod scope;
 mod server;
 mod tools;
-mod cli;
 
+use clap::Parser;
 use std::sync::Arc;
 use std::time::Duration;
-use clap::Parser;
 
 use std::net::SocketAddr;
 
-
 use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService,
-    session::local::LocalSessionManager,
+    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use tokio_util::sync::CancellationToken;
 
+use crate::cli::Args;
 use crate::gate::{GateCtx, gate};
 use crate::limiter::PeerLimiter;
 use crate::scope::Scope;
 use crate::server::CodeMcpServer;
-use crate::cli::Args;
 
 use crate::error::AppError;
 

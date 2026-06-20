@@ -17,11 +17,7 @@ use std::sync::{Arc, Mutex};
 /// Uses a parallel `ignore` walker (gitignore-aware) and an `AtomicUsize`
 /// counter for exact `max_results` capping. Walker entry errors are tallied
 /// and surfaced in the returned [`ToolResponse`] metadata.
-pub fn find(
-    directory: &str,
-    pattern: &str,
-    opts: FindOptions,
-) -> Result<ToolResponse, AppError> {
+pub fn find(directory: &str, pattern: &str, opts: FindOptions) -> Result<ToolResponse, AppError> {
     let re = Regex::new(pattern)?;
     let max_results = opts.max_results;
     let count = Arc::new(AtomicUsize::new(0));
@@ -63,6 +59,10 @@ pub fn find(
                 }
             };
 
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                return WalkState::Continue;
+            }
+
             let path = entry.path();
             let hay: std::borrow::Cow<'_, str> = if match_basename {
                 match path.file_name() {
@@ -99,10 +99,7 @@ pub fn find(
     }
 
     let entry_err_n = entry_errors.load(Ordering::Relaxed);
-    let first_error = first_error
-        .lock()
-        .ok()
-        .and_then(|g| g.clone());
+    let first_error = first_error.lock().ok().and_then(|g| g.clone());
 
     let match_count = count.load(Ordering::Relaxed);
 
@@ -120,7 +117,7 @@ pub fn find(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::testutil::{path_str, write_file, TestResult};
+    use crate::tools::testutil::{TestResult, path_str, write_file};
 
     #[test]
     fn find_match_basename_and_full_path() -> TestResult {
@@ -138,8 +135,16 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert!(basename.content.contains("foo.rs"), "got {}", basename.content);
-        assert!(!basename.content.contains("bar.rs"), "got {}", basename.content);
+        assert!(
+            basename.content.contains("foo.rs"),
+            "got {}",
+            basename.content
+        );
+        assert!(
+            !basename.content.contains("bar.rs"),
+            "got {}",
+            basename.content
+        );
 
         let fullpath_anchored = find(
             path_str(root)?,
@@ -166,7 +171,11 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert!(fullpath_ok.content.contains("foo.rs"), "got {}", fullpath_ok.content);
+        assert!(
+            fullpath_ok.content.contains("foo.rs"),
+            "got {}",
+            fullpath_ok.content
+        );
         Ok(())
     }
 }

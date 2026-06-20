@@ -2,10 +2,8 @@ use std::fmt::Write;
 use std::path::PathBuf;
 
 use rmcp::{
-    ServerHandler,
-    handler::server::wrapper::Parameters,
-    model::CallToolResult,
-    tool, tool_handler, tool_router,
+    ServerHandler, handler::server::wrapper::Parameters, model::CallToolResult, tool, tool_handler,
+    tool_router,
 };
 
 use crate::args::{CatArgs, FindArgs, GrepArgs, MemoriesArgs, StringOrVec};
@@ -52,10 +50,7 @@ impl CodeMcpServer {
     #[tool(
         description = "Regex search across files (parallel, gitignore-aware). output_mode: 'files_with_matches' (default — list matching file paths), 'content' (matching lines with line numbers), 'count' (per-file match tallies). Other options: case_insensitive, file_extensions, before/after_context, include_hidden, follow_symlinks, max_results, max_bytes."
     )]
-    async fn grep(
-        &self,
-        Parameters(args): Parameters<GrepArgs>,
-    ) -> ToolResult<CallToolResult> {
+    async fn grep(&self, Parameters(args): Parameters<GrepArgs>) -> ToolResult<CallToolResult> {
         let directory = match self.scope.check(&args.directory) {
             Ok(d) => d,
             Err(e) => return Ok(tool_error(e)),
@@ -94,10 +89,7 @@ impl CodeMcpServer {
     #[tool(
         description = "Find files by regex (matches basename by default; set match_basename=false to match full path). Options: include_hidden, respect_gitignore, max_results."
     )]
-    async fn find(
-        &self,
-        Parameters(args): Parameters<FindArgs>,
-    ) -> ToolResult<CallToolResult> {
+    async fn find(&self, Parameters(args): Parameters<FindArgs>) -> ToolResult<CallToolResult> {
         let directory = match self.scope.check(&args.directory) {
             Ok(d) => d,
             Err(e) => return Ok(tool_error(e)),
@@ -191,9 +183,7 @@ impl CodeMcpServer {
 #[tool_handler]
 impl ServerHandler for CodeMcpServer {
     fn get_info(&self) -> rmcp::model::InitializeResult {
-        let mut instructions = String::from(
-            "code-mcp: filesystem search and read tools.\n\n",
-        );
+        let mut instructions = String::from("code-mcp: filesystem search and read tools.\n\n");
         let _ = write!(
             instructions,
             "All paths are scoped to the project root: {}. \

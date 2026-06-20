@@ -4,8 +4,8 @@
 use super::options::GrepOptions;
 use ignore::WalkBuilder;
 use std::path::Path;
-use std::sync::mpsc::Receiver;
 use std::sync::Mutex;
+use std::sync::mpsc::Receiver;
 
 /// Record the first error message into `slot`, ignoring later ones.
 pub(crate) fn record_first(slot: &Mutex<Option<String>>, msg: String) {
@@ -17,10 +17,7 @@ pub(crate) fn record_first(slot: &Mutex<Option<String>>, msg: String) {
 }
 
 /// Build a parallel walker from the shared walker options in `GrepOptions`.
-pub(crate) fn build_parallel_walker(
-    directory: &str,
-    opts: &GrepOptions,
-) -> ignore::WalkParallel {
+pub(crate) fn build_parallel_walker(directory: &str, opts: &GrepOptions) -> ignore::WalkParallel {
     WalkBuilder::new(directory)
         .hidden(!opts.include_hidden)
         .git_ignore(opts.respect_gitignore)
@@ -40,8 +37,6 @@ pub(crate) fn extension_matches(path: &Path, extensions: &[String]) -> bool {
         .and_then(|e| e.to_str())
         .is_some_and(|e| extensions.iter().any(|w| w == e))
 }
-
-
 
 /// Drain string chunks from `rx` into a single output buffer, enforcing the
 /// authoritative `max_bytes` cap. When the cap is hit the final chunk is cut on

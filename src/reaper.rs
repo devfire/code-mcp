@@ -58,11 +58,7 @@ pub async fn reap_loop(
     }
 }
 
-async fn sweep(
-    manager: &LocalSessionManager,
-    tracker: &ActivityTracker,
-    idle_timeout: Duration,
-) {
+async fn sweep(manager: &LocalSessionManager, tracker: &ActivityTracker, idle_timeout: Duration) {
     let now = Instant::now();
     let live_ids: Vec<SessionId> = {
         let s = manager.sessions.read().await;

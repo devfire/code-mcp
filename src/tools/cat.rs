@@ -102,7 +102,7 @@ pub fn cat(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::testutil::{path_str, TestResult};
+    use crate::tools::testutil::{TestResult, path_str};
     use crate::tools::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES};
     use std::fs;
 
@@ -113,7 +113,11 @@ mod tests {
         fs::write(&path, "L1\nL2\nL3\nL4\nL5\nL6\nL7\n")?;
 
         let res = cat(path_str(&path)?, 2, 3, DEFAULT_MAX_BYTES)?;
-        assert!(res.content.starts_with("L3\nL4\nL5\n"), "got {:?}", res.content);
+        assert!(
+            res.content.starts_with("L3\nL4\nL5\n"),
+            "got {:?}",
+            res.content
+        );
         assert!(res.truncated, "expected truncated=true");
         assert_eq!(res.truncation_reason, Some("line_cap".to_string()));
 
@@ -133,14 +137,23 @@ mod tests {
         let res = cat(path_str(&path)?, 0, DEFAULT_MAX_LINES, 50)?;
         assert!(res.truncated, "expected truncated=true, got {:?}", res);
         assert_eq!(res.truncation_reason, Some("byte_cap".to_string()));
-        assert!(res.content.len() < body.len(), "expected truncation, got len {}", res.content.len());
+        assert!(
+            res.content.len() < body.len(),
+            "expected truncation, got len {}",
+            res.content.len()
+        );
         Ok(())
     }
 
     #[test]
     fn cat_errors_when_path_is_directory() -> TestResult {
         let td = tempfile::TempDir::new()?;
-        match cat(path_str(td.path())?, 0, DEFAULT_MAX_LINES, DEFAULT_MAX_BYTES) {
+        match cat(
+            path_str(td.path())?,
+            0,
+            DEFAULT_MAX_LINES,
+            DEFAULT_MAX_BYTES,
+        ) {
             Err(AppError::InvalidRequest(_)) => Ok(()),
             Err(other) => Err(format!("expected InvalidRequest, got {:?}", other).into()),
             Ok(s) => Err(format!("expected error, got Ok({:?})", s).into()),

@@ -23,11 +23,7 @@ pub(crate) struct MatchSink<'a> {
 impl Sink for MatchSink<'_> {
     type Error = io::Error;
 
-    fn matched(
-        &mut self,
-        _searcher: &Searcher,
-        mat: &SinkMatch<'_>,
-    ) -> Result<bool, io::Error> {
+    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
         // Increment first; if we are over the cap, undo conceptually by stopping.
         let prev = self.count.fetch_add(1, Ordering::Relaxed);
         if prev >= self.max_results {
@@ -45,11 +41,7 @@ impl Sink for MatchSink<'_> {
         Ok(true)
     }
 
-    fn context(
-        &mut self,
-        _searcher: &Searcher,
-        ctx: &SinkContext<'_>,
-    ) -> Result<bool, io::Error> {
+    fn context(&mut self, _searcher: &Searcher, ctx: &SinkContext<'_>) -> Result<bool, io::Error> {
         // Context lines do not count toward `max_results` (the cap is on
         // matches, not surrounding lines), but we still respect the byte cap.
         if self.buf.len() >= self.max_bytes {
@@ -86,11 +78,7 @@ pub(crate) struct FileMatchSink<'a> {
 impl Sink for FileMatchSink<'_> {
     type Error = io::Error;
 
-    fn matched(
-        &mut self,
-        _searcher: &Searcher,
-        _mat: &SinkMatch<'_>,
-    ) -> Result<bool, io::Error> {
+    fn matched(&mut self, _searcher: &Searcher, _mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
         if self.matched_this_file {
             // Already recorded this file; stop searching it.
             return Ok(false);
@@ -104,11 +92,7 @@ impl Sink for FileMatchSink<'_> {
         Ok(false)
     }
 
-    fn context(
-        &mut self,
-        _searcher: &Searcher,
-        _ctx: &SinkContext<'_>,
-    ) -> Result<bool, io::Error> {
+    fn context(&mut self, _searcher: &Searcher, _ctx: &SinkContext<'_>) -> Result<bool, io::Error> {
         // No context needed for files_with_matches mode.
         Ok(true)
     }
@@ -123,20 +107,12 @@ pub(crate) struct CountSink {
 impl Sink for CountSink {
     type Error = io::Error;
 
-    fn matched(
-        &mut self,
-        _searcher: &Searcher,
-        _mat: &SinkMatch<'_>,
-    ) -> Result<bool, io::Error> {
+    fn matched(&mut self, _searcher: &Searcher, _mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
         self.count += 1;
         Ok(true)
     }
 
-    fn context(
-        &mut self,
-        _searcher: &Searcher,
-        _ctx: &SinkContext<'_>,
-    ) -> Result<bool, io::Error> {
+    fn context(&mut self, _searcher: &Searcher, _ctx: &SinkContext<'_>) -> Result<bool, io::Error> {
         Ok(true)
     }
 }

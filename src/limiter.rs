@@ -102,7 +102,9 @@ mod tests {
         let l = PeerLimiter::new(2.0, 0.001, 1024);
         l.try_consume(ip(1)).unwrap();
         l.try_consume(ip(1)).unwrap();
-        let err = l.try_consume(ip(1)).expect_err("third call should be rate-limited");
+        let err = l
+            .try_consume(ip(1))
+            .expect_err("third call should be rate-limited");
         assert!(err > Duration::from_secs(0));
     }
 
