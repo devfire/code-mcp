@@ -9,7 +9,7 @@ use rmcp::{
 };
 
 use crate::args::{CatArgs, FindArgs, GrepArgs, MemoriesArgs, StringOrVec};
-use crate::error::{ToolResult, join_error};
+use crate::error::{ToolResult, join_error, tool_error};
 use crate::memory::load_memory;
 use crate::scope::Scope;
 use crate::tools::{self, OutputMode};
@@ -56,8 +56,14 @@ impl CodeMcpServer {
         &self,
         Parameters(args): Parameters<GrepArgs>,
     ) -> ToolResult<CallToolResult> {
-        let directory = self.scope.check(&args.directory)?;
-        let output_mode = OutputMode::from_str_lossy(&args.output_mode)?;
+        let directory = match self.scope.check(&args.directory) {
+            Ok(d) => d,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        let output_mode = match OutputMode::from_str_lossy(&args.output_mode) {
+            Ok(m) => m,
+            Err(e) => return Ok(tool_error(e)),
+        };
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::GrepOptions {
                 before_context: args.before_context,
@@ -77,9 +83,12 @@ impl CodeMcpServer {
             tools::grep(&directory.to_string_lossy(), &args.pattern, opts)
         })
         .await
-        .map_err(join_error)??;
+        .map_err(join_error)?;
 
-        Ok(res.into_call_tool_result())
+        match res {
+            Ok(r) => Ok(r.into_call_tool_result()),
+            Err(e) => Ok(tool_error(e)),
+        }
     }
 
     #[tool(
@@ -89,7 +98,10 @@ impl CodeMcpServer {
         &self,
         Parameters(args): Parameters<FindArgs>,
     ) -> ToolResult<CallToolResult> {
-        let directory = self.scope.check(&args.directory)?;
+        let directory = match self.scope.check(&args.directory) {
+            Ok(d) => d,
+            Err(e) => return Ok(tool_error(e)),
+        };
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::FindOptions {
                 max_results: args.max_results,
@@ -100,16 +112,22 @@ impl CodeMcpServer {
             tools::find(&directory.to_string_lossy(), &args.pattern, opts)
         })
         .await
-        .map_err(join_error)??;
+        .map_err(join_error)?;
 
-        Ok(res.into_call_tool_result())
+        match res {
+            Ok(r) => Ok(r.into_call_tool_result()),
+            Err(e) => Ok(tool_error(e)),
+        }
     }
 
     #[tool(
         description = "Read file contents. Use offset to paginate long files; max_lines / max_bytes cap the response size."
     )]
     async fn cat(&self, Parameters(args): Parameters<CatArgs>) -> ToolResult<CallToolResult> {
-        let file_path = self.scope.check(&args.file_path)?;
+        let file_path = match self.scope.check(&args.file_path) {
+            Ok(p) => p,
+            Err(e) => return Ok(tool_error(e)),
+        };
         let res = tokio::task::spawn_blocking(move || {
             tools::cat(
                 &file_path.to_string_lossy(),
@@ -119,9 +137,12 @@ impl CodeMcpServer {
             )
         })
         .await
-        .map_err(join_error)??;
+        .map_err(join_error)?;
 
-        Ok(res.into_call_tool_result())
+        match res {
+            Ok(r) => Ok(r.into_call_tool_result()),
+            Err(e) => Ok(tool_error(e)),
+        }
     }
 
     #[tool(
@@ -131,29 +152,39 @@ impl CodeMcpServer {
         &self,
         Parameters(args): Parameters<MemoriesArgs>,
     ) -> ToolResult<CallToolResult> {
-        let dir = self.memory_dir.clone().ok_or_else(|| {
-            rmcp::ErrorData::invalid_params(
-                "invalid_request",
-                Some(serde_json::json!({
-                    "error": "memory dir not configured; start server with --memory-dir <path>"
-                })),
-            )
-        })?;
+        let dir = match self.memory_dir.clone() {
+            Some(d) => d,
+            None => {
+                return Ok(CallToolResult {
+                    content: vec![rmcp::model::Content::text(
+                        "memory dir not configured; start server with --memory-dir <path>",
+                    )],
+                    structured_content: None,
+                    is_error: Some(true),
+                    meta: None,
+                });
+            }
+        };
 
         let res = tokio::task::spawn_blocking(move || load_memory(&dir, args.name.as_deref()))
             .await
-            .map_err(join_error)??;
+            .map_err(join_error)?;
 
-        let resp = tools::ToolResponse {
-            content: res,
-            truncated: false,
-            truncation_reason: None,
-            match_count: None,
-            entry_error_count: None,
-            search_error_count: None,
-            first_error: None,
-        };
-        Ok(resp.into_call_tool_result())
+        match res {
+            Ok(content) => {
+                let resp = tools::ToolResponse {
+                    content,
+                    truncated: false,
+                    truncation_reason: None,
+                    match_count: None,
+                    entry_error_count: None,
+                    search_error_count: None,
+                    first_error: None,
+                };
+                Ok(resp.into_call_tool_result())
+            }
+            Err(e) => Ok(tool_error(e)),
+        }
     }
 }
 

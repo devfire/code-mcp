@@ -28,14 +28,15 @@ Download the latest release from the [Releases page](https://github.com/devfire/
 
 The included `Dockerfile` uses a multi-stage build with `cargo-chef` for optimal layer caching. The final image is based on `debian:bookworm-slim` (~80 MB) and contains only the stripped binary and `git` (needed by the `ignore` crate for `.gitignore` traversal).
 
+Multi-arch images (`linux/amd64`, `linux/arm64`) are published to GHCR automatically on every release. Pull the pre-built image — no local build needed:
+
 ```sh
-# Build
-docker build -t code-mcp .
+docker pull ghcr.io/devfire/code-mcp:latest
 ```
 
 ```sh
 # Run with defaults (bind 0.0.0.0:8080, project /project)
-docker run -p 8080:8080 -v /path/to/repo:/project:ro code-mcp
+docker run -p 8080:8080 -v /path/to/repo:/project:ro ghcr.io/devfire/code-mcp:latest
 ```
 
 ```sh
@@ -43,7 +44,7 @@ docker run -p 8080:8080 -v /path/to/repo:/project:ro code-mcp
 docker run -p 9090:9090 \
   -v /path/to/repo:/src:ro \
   -v /path/to/memories:/memories:ro \
-  code-mcp \
+  ghcr.io/devfire/code-mcp:latest \
   --bind 0.0.0.0:9090 \
   --project /src \
   --memory-dir /memories \
@@ -55,7 +56,7 @@ docker run -p 9090:9090 \
 ```sh
 # With debug logging
 docker run -p 8080:8080 -e RUST_LOG=debug,rmcp=info \
-  -v /path/to/repo:/project:ro code-mcp
+  -v /path/to/repo:/project:ro ghcr.io/devfire/code-mcp:latest
 ```
 
 The `ENTRYPOINT` is the binary itself, so any arguments after the image name replace the default `CMD` and go directly to clap. 
@@ -63,8 +64,20 @@ The `ENTRYPOINT` is the binary itself, so any arguments after the image name rep
 Pass `--help` to see all options:
 
 ```sh
-docker run --rm code-mcp --help
+docker run --rm ghcr.io/devfire/code-mcp:latest --help
 ```
+
+<details>
+<summary>Build locally instead</summary>
+
+If you want to build from source (e.g. for an unreleased commit or a fork):
+
+```sh
+docker build -t code-mcp .
+docker run -p 8080:8080 -v /path/to/repo:/project:ro code-mcp
+```
+
+</details>
 
 Flags:
 
@@ -76,8 +89,6 @@ Flags:
 - `--trust-forwarded-for` — default `false`. When set, the gate uses the rightmost entry of `X-Forwarded-For` as the peer IP for rate-limiting. This assumes a single trusted proxy hop (e.g. AWS ALB) that appends the real client IP; entries to the left of the last hop are client-supplied and forgeable. Only enable when the server sits behind a reverse proxy you control.
 - `--session-idle-timeout-secs <N>` — default `1800` (30 min). Idle timeout for stateful sessions. A background reaper task closes any session whose last observed request is older than this, so abandoned clients (process killed, network gone, no DELETE sent) don't pin slots against `--max-sessions` indefinitely. The cap defends against bursts; the reaper handles long-lived zombies.
 - `--session-sweep-interval-secs <N>` — default `60`. How often the reaper sweeps for idle sessions.
-
-Multi-arch images (`linux/amd64`, `linux/arm64`) are published automatically on every release.
 
 ### From source
 
@@ -202,6 +213,22 @@ The `--memory-dir` is **not** required to be inside `--project` — it's server-
 ```
 
 The `instructions.md` file is read once at startup. The other files are read on demand by the `memories` and `cat` tools, so editing them does not require a restart.
+
+### Bootstrapping memories
+
+code-mcp is a read-only, LLM-free tool server: it can *serve* a memory directory but it cannot *create* one. Generating memories needs read access to the code, write access to the memory dir, and a model — and all three only coexist **on the box where the files live**, not in a remote client connecting over the network.
+
+So bootstrapping is a separate, co-located step: run a local coding agent against the repo to produce the `MEMORY.md` index + per-area files, then point `--memory-dir` at the output. The included script does this:
+
+```sh
+# Uses `claude -p` by default; the agent reads/writes the local filesystem directly.
+scripts/generate-memories.sh ./my/repo ./memories
+
+# Any stdin-driven agent with local fs access works:
+AGENT="codex exec" scripts/generate-memories.sh /srv/monorepo /srv/memories
+```
+
+The script feeds the agent a prompt that builds a **functional-area mental model** — the major subsystems, their entry points, how they talk, and the non-obvious gotchas — rather than transcribing code the client can already `grep`. The goal is to orient a cold client so it doesn't burn calls rediscovering structure every session. Review the generated files before serving them, then start the server with `--memory-dir ./memories`.
 
 Logging via `RUST_LOG`:
 
