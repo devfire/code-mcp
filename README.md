@@ -42,11 +42,11 @@ docker run -p 8080:8080 -v /path/to/repo:/project:ro ghcr.io/devfire/code-mcp:la
 ```sh
 # Override any flag — all CLI args are supported natively via ENTRYPOINT
 docker run -p 9090:9090 \
-  -v /path/to/repo:/src:ro \
+  -v /path/to/repo:/project:ro \
   -v /path/to/memories:/memories:ro \
   ghcr.io/devfire/code-mcp:latest \
   --bind 0.0.0.0:9090 \
-  --project /src \
+  --project /project \
   --memory-dir /memories \
   --max-sessions 128 \
   --initialize-rate-per-min 20 \
