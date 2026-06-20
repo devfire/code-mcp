@@ -1,4 +1,5 @@
 use rmcp::ErrorData;
+use rmcp::model::CallToolResult;
 use serde_json::json;
 use thiserror::Error;
 
@@ -16,6 +17,18 @@ pub fn join_error(e: tokio::task::JoinError) -> ErrorData {
 
 /// Convenience alias for tool handler return types.
 pub type ToolResult<T> = Result<T, ErrorData>;
+
+/// Convert an `AppError` into a `CallToolResult` with `is_error: true`.
+/// This keeps tool failures at the tool level (the session stays alive)
+/// rather than escalating to a JSON-RPC protocol error that kills the session.
+pub fn tool_error(err: AppError) -> CallToolResult {
+    CallToolResult {
+        content: vec![rmcp::model::Content::text(err.to_string())],
+        structured_content: None,
+        is_error: Some(true),
+        meta: None,
+    }
+}
 
 /// Application-level error type. Variants map to MCP error codes via the
 /// `From<AppError> for ErrorData` impl below: user-facing failures

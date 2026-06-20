@@ -31,8 +31,12 @@ pub struct ToolResponse {
 impl ToolResponse {
     /// Build a `CallToolResult` from this response: text content goes into
     /// `content`, and the structured metadata goes into `structured_content`.
+    ///
+    /// `structured_content` includes the text *plus* metadata so clients that
+    /// prefer structured output still get the actual content.
     pub fn into_call_tool_result(self) -> CallToolResult {
         let structured = json!({
+            "content": self.content,
             "truncated": self.truncated,
             "truncation_reason": self.truncation_reason,
             "match_count": self.match_count,
