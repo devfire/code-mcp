@@ -162,7 +162,7 @@ Load persisted context (conventions, project facts, prior feedback) for this ser
 
 | arg    | type     | default | notes                                                                       |
 | ------ | -------- | ------- | --------------------------------------------------------------------------- |
-| `name` | `string` | —       | Optional filename within the memory dir (e.g. `user_role.md`). Plain basename only — `..`, `/`, `\` are rejected. |
+| `name` | `string` | —       | Optional filename within the memory dir (e.g. `area_network.md`). Plain basename only — `..`, `/`, `\` are rejected. |
 
 Without `name`: returns the contents of `<memory-dir>/MEMORY.md` if present, otherwise a listing of `*.md` files in the dir. Re-reads on every call, so edits made on disk are picked up live.
 
@@ -204,10 +204,11 @@ The `--memory-dir` is **not** required to be inside `--project` — it's server-
 ```
 <memory-dir>/
 ├── instructions.md     # appended to InitializeResult.instructions on connect
-├── MEMORY.md           # returned by memories() with no args
-├── user_role.md        # returned by memories(name="user_role.md")
-├── feedback_testing.md
-└── project_status.md
+├── MEMORY.md           # index — returned by memories() with no args
+├── area_network.md     # returned by memories(name="area_network.md")
+├── area_crypto.md
+├── area_commands.md
+└── ...                 # one area_*.md per functional area
 ```
 
 The `instructions.md` file is read once at startup. The other files are read on demand by the `memories` and `cat` tools, so editing them does not require a restart.
