@@ -75,7 +75,7 @@ impl ErrorState {
 /// Walker entry errors and per-file search errors are tallied and surfaced in
 /// the returned [`ToolResponse`] metadata rather than aborting the search.
 #[allow(clippy::needless_pass_by_value)]
-pub fn grep(directory: &str, pattern: &str, opts: GrepOptions) -> Result<ToolResponse, AppError> {
+pub fn grep(directory: &Path, pattern: &str, opts: GrepOptions) -> Result<ToolResponse, AppError> {
     match opts.output_mode {
         OutputMode::Content => grep_streamed(directory, pattern, &opts, StreamMode::Content),
         OutputMode::FilesWithMatches => {
@@ -97,7 +97,7 @@ enum StreamMode {
 /// Unified implementation for `content` and `files_with_matches` modes.
 /// Both use the mpsc pipeline with early-quit on `max_results`.
 fn grep_streamed(
-    directory: &str,
+    directory: &Path,
     pattern: &str,
     opts: &GrepOptions,
     mode: StreamMode,
@@ -215,7 +215,7 @@ fn flush(tx: &Sender<String>, buf: &mut String) {
 /// `count` mode — tally matches per file, output as `path: N` lines.
 /// Does not use a channel; collects into a shared HashMap instead.
 fn grep_count(
-    directory: &str,
+    directory: &Path,
     pattern: &str,
     opts: &GrepOptions,
 ) -> Result<ToolResponse, AppError> {
@@ -351,7 +351,7 @@ fn build_searcher(opts: &GrepOptions, mode: &StreamMode) -> grep_searcher::Searc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::testutil::{TestResult, path_str, write_file};
+    use crate::tools::testutil::{TestResult, write_file};
     use std::fs;
 
     #[test]
@@ -366,7 +366,7 @@ mod tests {
             respect_gitignore: false,
             ..Default::default()
         };
-        let res = grep(path_str(root)?, "needle", opts)?;
+        let res = grep(root, "needle", opts)?;
         assert!(
             res.match_count.unwrap() <= 15,
             "expected match_count <= 15, got {:?}",
@@ -383,7 +383,7 @@ mod tests {
         write_file(root, "a.txt", "Hello World\n")?;
 
         let case_sensitive = grep(
-            path_str(root)?,
+            root,
             "hello",
             GrepOptions {
                 output_mode: OutputMode::Content,
@@ -399,7 +399,7 @@ mod tests {
         );
 
         let case_insensitive = grep(
-            path_str(root)?,
+            root,
             "hello",
             GrepOptions {
                 case_insensitive: true,
@@ -424,7 +424,7 @@ mod tests {
         write_file(root, "b.txt", "fn target() {}\n")?;
 
         let res = grep(
-            path_str(root)?,
+            root,
             "target",
             GrepOptions {
                 file_extensions: vec!["rs".to_string()],
@@ -447,7 +447,7 @@ mod tests {
         write_file(root, "open.txt", "needle\n")?;
 
         let respected = grep(
-            path_str(root)?,
+            root,
             "needle",
             GrepOptions {
                 respect_gitignore: true,
@@ -466,7 +466,7 @@ mod tests {
         );
 
         let ignored = grep(
-            path_str(root)?,
+            root,
             "needle",
             GrepOptions {
                 respect_gitignore: false,
@@ -490,7 +490,7 @@ mod tests {
         write_file(root, "c.rs", "needle here\n")?;
 
         let res = grep(
-            path_str(root)?,
+            root,
             "needle",
             GrepOptions {
                 output_mode: OutputMode::FilesWithMatches,
@@ -519,7 +519,7 @@ mod tests {
         }
 
         let res = grep(
-            path_str(root)?,
+            root,
             "needle",
             GrepOptions {
                 output_mode: OutputMode::FilesWithMatches,
@@ -545,7 +545,7 @@ mod tests {
         write_file(root, "c.rs", "needle here\n")?;
 
         let res = grep(
-            path_str(root)?,
+            root,
             "needle",
             GrepOptions {
                 output_mode: OutputMode::Count,

@@ -7,6 +7,7 @@ use crate::error::AppError;
 use ignore::WalkState;
 use regex::Regex;
 use std::mem;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
@@ -17,7 +18,7 @@ use std::sync::{Arc, Mutex};
 /// Uses a parallel `ignore` walker (gitignore-aware) and an `AtomicUsize`
 /// counter for exact `max_results` capping. Walker entry errors are tallied
 /// and surfaced in the returned [`ToolResponse`] metadata.
-pub fn find(directory: &str, pattern: &str, opts: FindOptions) -> Result<ToolResponse, AppError> {
+pub fn find(directory: &Path, pattern: &str, opts: FindOptions) -> Result<ToolResponse, AppError> {
     let re = Regex::new(pattern)?;
     let max_results = opts.max_results;
     let count = Arc::new(AtomicUsize::new(0));
@@ -112,7 +113,7 @@ pub fn find(directory: &str, pattern: &str, opts: FindOptions) -> Result<ToolRes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::testutil::{TestResult, path_str, write_file};
+    use crate::tools::testutil::{TestResult, write_file};
 
     #[test]
     fn find_match_basename_and_full_path() -> TestResult {
@@ -122,7 +123,7 @@ mod tests {
         write_file(root, "sub/bar.rs", "")?;
 
         let basename = find(
-            path_str(root)?,
+            root,
             "^foo",
             FindOptions {
                 match_basename: true,
@@ -142,7 +143,7 @@ mod tests {
         );
 
         let fullpath_anchored = find(
-            path_str(root)?,
+            root,
             "^foo",
             FindOptions {
                 match_basename: false,
@@ -158,7 +159,7 @@ mod tests {
         );
 
         let fullpath_ok = find(
-            path_str(root)?,
+            root,
             r"sub.*foo\.rs$",
             FindOptions {
                 match_basename: false,

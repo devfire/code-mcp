@@ -27,7 +27,7 @@ pub(crate) fn record_first(slot: &Mutex<Option<String>>, msg: String) {
 
 /// Build a parallel walker from any option struct implementing [`WalkerConfig`].
 pub(crate) fn build_parallel_walker(
-    directory: &str,
+    directory: &Path,
     opts: &impl WalkerConfig,
 ) -> ignore::WalkParallel {
     WalkBuilder::new(directory)

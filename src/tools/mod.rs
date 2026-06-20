@@ -48,8 +48,4 @@ pub(crate) mod testutil {
         f.write_all(contents.as_bytes())?;
         Ok(())
     }
-
-    pub(crate) fn path_str(p: &Path) -> Result<&str, Box<dyn std::error::Error>> {
-        p.to_str().ok_or_else(|| "non-utf8 path".into())
-    }
 }

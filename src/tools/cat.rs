@@ -4,7 +4,7 @@ use super::response::ToolResponse;
 use crate::error::AppError;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::Path;
 
 /// Read file contents with pagination.
 ///
@@ -17,19 +17,18 @@ use std::path::PathBuf;
 /// Returns [`AppError::InvalidRequest`] if the target is missing or not a
 /// regular file.
 pub fn cat(
-    file_path: &str,
+    file_path: &Path,
     offset: usize,
     max_lines: usize,
     max_bytes: usize,
 ) -> Result<ToolResponse, AppError> {
-    let path = PathBuf::from(file_path);
-    if !path.is_file() {
+    if !file_path.is_file() {
         return Err(AppError::InvalidRequest(
             "Target is not a file or does not exist".to_string(),
         ));
     }
 
-    let file = File::open(&path)?;
+    let file = File::open(file_path)?;
     let mut reader = BufReader::new(file);
 
     // Skip `offset` lines.
@@ -102,7 +101,7 @@ pub fn cat(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::testutil::{TestResult, path_str};
+    use crate::tools::testutil::TestResult;
     use crate::tools::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES};
     use std::fs;
 
@@ -112,7 +111,7 @@ mod tests {
         let path = td.path().join("a.txt");
         fs::write(&path, "L1\nL2\nL3\nL4\nL5\nL6\nL7\n")?;
 
-        let res = cat(path_str(&path)?, 2, 3, DEFAULT_MAX_BYTES)?;
+        let res = cat(&path, 2, 3, DEFAULT_MAX_BYTES)?;
         assert!(
             res.content.starts_with("L3\nL4\nL5\n"),
             "got {:?}",
@@ -121,7 +120,7 @@ mod tests {
         assert!(res.truncated, "expected truncated=true");
         assert_eq!(res.truncation_reason, Some("line_cap".to_string()));
 
-        let res = cat(path_str(&path)?, 4, 3, DEFAULT_MAX_BYTES)?;
+        let res = cat(&path, 4, 3, DEFAULT_MAX_BYTES)?;
         assert_eq!(res.content, "L5\nL6\nL7\n", "got {:?}", res.content);
         assert!(!res.truncated);
         Ok(())
@@ -134,7 +133,7 @@ mod tests {
         let body = "abcdefghijklmnopqrstuvwxyz\n".repeat(20);
         fs::write(&path, &body)?;
 
-        let res = cat(path_str(&path)?, 0, DEFAULT_MAX_LINES, 50)?;
+        let res = cat(&path, 0, DEFAULT_MAX_LINES, 50)?;
         assert!(res.truncated, "expected truncated=true, got {:?}", res);
         assert_eq!(res.truncation_reason, Some("byte_cap".to_string()));
         assert!(
@@ -149,7 +148,7 @@ mod tests {
     fn cat_errors_when_path_is_directory() -> TestResult {
         let td = tempfile::TempDir::new()?;
         match cat(
-            path_str(td.path())?,
+            td.path(),
             0,
             DEFAULT_MAX_LINES,
             DEFAULT_MAX_BYTES,

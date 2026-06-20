@@ -75,7 +75,7 @@ impl CodeMcpServer {
                 max_bytes: args.max_bytes,
                 output_mode,
             };
-            tools::grep(&directory.to_string_lossy(), &args.pattern, opts)
+            tools::grep(&directory, &args.pattern, opts)
         })
         .await
         .map_err(join_error)?;
@@ -101,7 +101,7 @@ impl CodeMcpServer {
                 respect_gitignore: args.respect_gitignore,
                 match_basename: args.match_basename,
             };
-            tools::find(&directory.to_string_lossy(), &args.pattern, opts)
+            tools::find(&directory, &args.pattern, opts)
         })
         .await
         .map_err(join_error)?;
@@ -122,7 +122,7 @@ impl CodeMcpServer {
         };
         let res = tokio::task::spawn_blocking(move || {
             tools::cat(
-                &file_path.to_string_lossy(),
+                &file_path,
                 args.offset,
                 args.max_lines,
                 args.max_bytes,
