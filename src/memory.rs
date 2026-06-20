@@ -1,4 +1,5 @@
 use crate::error::AppError;
+use crate::tools::ToolResponse;
 use std::fmt::Write;
 use std::path::Path;
 
@@ -7,7 +8,11 @@ use std::path::Path;
 /// - If `name` is `Some`, reads that specific `.md` file (rejecting path traversal).
 /// - If `name` is `None`, returns `MEMORY.md` if present, otherwise a listing of
 ///   all `.md` files in the directory.
-pub fn load_memory(dir: &Path, name: Option<&str>) -> Result<String, AppError> {
+///
+/// Returns a [`ToolResponse`] (with no truncation/match metadata, since memory
+/// files are read whole) so the caller in `server.rs` can treat this like any
+/// other tool entry point.
+pub fn load_memory(dir: &Path, name: Option<&str>) -> Result<ToolResponse, AppError> {
     if !dir.is_dir() {
         return Err(AppError::NotFound(format!(
             "memory dir does not exist: {}",
@@ -26,13 +31,13 @@ pub fn load_memory(dir: &Path, name: Option<&str>) -> Result<String, AppError> {
         if !path.is_file() {
             return Err(AppError::NotFound(format!("memory not found: {name}")));
         }
-        return Ok(std::fs::read_to_string(&path)?);
+        return Ok(ToolResponse::text(std::fs::read_to_string(&path)?));
     }
 
     // No name: prefer MEMORY.md, otherwise list *.md files.
     let index = dir.join("MEMORY.md");
     if index.is_file() {
-        return Ok(std::fs::read_to_string(&index)?);
+        return Ok(ToolResponse::text(std::fs::read_to_string(&index)?));
     }
 
     let mut listing = String::from("# Memory dir contents\n\n");
@@ -59,7 +64,7 @@ pub fn load_memory(dir: &Path, name: Option<&str>) -> Result<String, AppError> {
 or create a `MEMORY.md` index at the top level.\n",
         );
     }
-    Ok(listing)
+    Ok(ToolResponse::text(listing))
 }
 
 #[cfg(test)]
@@ -76,7 +81,7 @@ mod tests {
         fs::write(td.path().join("MEMORY.md"), "# index\n- foo\n")?;
         fs::write(td.path().join("foo.md"), "ignored\n")?;
 
-        let out = load_memory(td.path(), None)?;
+        let out = load_memory(td.path(), None)?.content;
         assert!(out.starts_with("# index"), "got {:?}", out);
         Ok(())
     }
@@ -88,7 +93,7 @@ mod tests {
         fs::write(td.path().join("b.md"), "")?;
         fs::write(td.path().join("ignore.txt"), "")?;
 
-        let out = load_memory(td.path(), None)?;
+        let out = load_memory(td.path(), None)?.content;
         assert!(out.contains("- a.md"), "got {}", out);
         assert!(out.contains("- b.md"), "got {}", out);
         assert!(!out.contains("ignore.txt"), "got {}", out);
@@ -100,7 +105,7 @@ mod tests {
         let td = TempDir::new()?;
         fs::write(td.path().join("user_role.md"), "data scientist\n")?;
 
-        let out = load_memory(td.path(), Some("user_role.md"))?;
+        let out = load_memory(td.path(), Some("user_role.md"))?.content;
         assert_eq!(out, "data scientist\n");
         Ok(())
     }

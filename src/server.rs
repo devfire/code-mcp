@@ -163,18 +163,7 @@ impl CodeMcpServer {
             .map_err(join_error)?;
 
         match res {
-            Ok(content) => {
-                let resp = tools::ToolResponse {
-                    content,
-                    truncated: false,
-                    truncation_reason: None,
-                    match_count: None,
-                    entry_error_count: None,
-                    search_error_count: None,
-                    first_error: None,
-                };
-                Ok(resp.into_call_tool_result())
-            }
+            Ok(r) => Ok(r.into_call_tool_result()),
             Err(e) => Ok(tool_error(e)),
         }
     }

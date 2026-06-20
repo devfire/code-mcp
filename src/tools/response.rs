@@ -29,6 +29,21 @@ pub struct ToolResponse {
 }
 
 impl ToolResponse {
+    /// Build a minimal `ToolResponse` carrying just text content, with no
+    /// truncation or match metadata. Used by tools (like `memories`) whose
+    /// output is a single opaque string with no associated search metrics.
+    pub fn text(content: String) -> Self {
+        Self {
+            content,
+            truncated: false,
+            truncation_reason: None,
+            match_count: None,
+            entry_error_count: None,
+            search_error_count: None,
+            first_error: None,
+        }
+    }
+
     /// Build a `CallToolResult` from this response: text content goes into
     /// `content`, and the structured metadata goes into `structured_content`.
     ///
