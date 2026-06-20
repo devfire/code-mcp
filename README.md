@@ -9,7 +9,14 @@ Able to handle very large codebases.
 Re-uses ripgrep crates just like ripgrep itself.
 
 > [!WARNING]
-> Authentication & Authorization are outside the scope of this project. **Run this on a private LAN only.** Anyone who can reach the bind address can use the tools. `--project` scopes what they can read. Run this with `chroot` for extra jailing.
+> Authentication & Authorization are outside the scope of this project.
+>
+> **Run this on a private LAN only.**
+>
+> Anyone who can reach the bind address can use the tools but `--project` scopes what they can read.
+>
+> Run this as docker OR with `chroot` for extra jailing.
+> 
 > NOTE: https://modelcontextprotocol.io/docs/tutorials/security/authorization is what you should be using regardless.
 
 ## Installation
