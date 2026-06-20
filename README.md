@@ -80,6 +80,7 @@ docker run -p 8080:8080 -v /path/to/repo:/project:ro code-mcp
 </details>
 
 Flags:
+<details>
 
 - `--bind <addr:port>` — default `0.0.0.0:8080`.
 - `--project <path>` — **required**. Every path the tools touch is canonicalized and required to lie within this directory; anything outside is rejected with `invalid_params`. Symlinks in input paths are resolved before the check, so `cat /proj/link-to-etc-passwd` is rejected because its canonical form is `/etc/passwd`. The server refuses to start without it.
@@ -89,6 +90,8 @@ Flags:
 - `--trust-forwarded-for` — default `false`. When set, the gate uses the rightmost entry of `X-Forwarded-For` as the peer IP for rate-limiting. This assumes a single trusted proxy hop (e.g. AWS ALB) that appends the real client IP; entries to the left of the last hop are client-supplied and forgeable. Only enable when the server sits behind a reverse proxy you control.
 - `--session-idle-timeout-secs <N>` — default `1800` (30 min). Idle timeout for stateful sessions. A background reaper task closes any session whose last observed request is older than this, so abandoned clients (process killed, network gone, no DELETE sent) don't pin slots against `--max-sessions` indefinitely. The cap defends against bursts; the reaper handles long-lived zombies.
 - `--session-sweep-interval-secs <N>` — default `60`. How often the reaper sweeps for idle sessions.
+
+</details>
 
 ### From source
 
@@ -116,6 +119,7 @@ A: No. Auth is hard and you shouldn't be relying on my auth anyway. MCP standard
 
 All tools return structured `ToolResponse` objects with metadata (truncation status, error counts, match counts) rather than plain strings. This allows clients to programmatically detect truncation and other conditions.
 
+<details>
 ### `grep`
 Regex search across files using parallel directory traversal (`ignore` + `grep-searcher`).
 
@@ -181,23 +185,17 @@ Read file contents with pagination.
 | `max_bytes` | `int`    | ~5 MiB  | hard cap on response size (UTF-8-safe cut at line boundary)          |
 
 Use `offset` to page through large files: if the response indicates truncation, call again with `offset = previous_offset + max_lines`. The response will include metadata indicating whether the result was truncated and the reason.
-
-## Build & run
-
-```sh
-cargo build --release
-./target/release/code-mcp --bind 0.0.0.0:8080 --project ./my/repo
-```
+</details>
 
 ### Scope semantics
 
-With `--project ./my/repo` set:
+With `--project ./my/repo` set. What's ok and what isn't:
 
-- ✅ `cat ./my/repo/src/main.rs` — inside the root, allowed
-- ✅ `grep ./my/repo --pattern foo` — directory inside the root, allowed
-- ❌ `cat /etc/passwd` — outside the root, rejected
-- ❌ `cat ./my/repo/../../etc/passwd` — canonicalizes to `/etc/passwd`, rejected
-- ❌ `cat ./my/repo/link-to-secret` (symlink to `/etc/passwd`) — symlink resolves outside root, rejected
+-  `cat ./my/repo/src/main.rs` — inside the root, allowed
+-  `grep ./my/repo --pattern foo` — directory inside the root, allowed
+-  `cat /etc/passwd` — outside the root, rejected. Nice try lol
+-  `cat ./my/repo/../../etc/passwd` — canonicalizes to `/etc/passwd`, rejected. Same
+-  `cat ./my/repo/link-to-secret` (symlink to `/etc/passwd`) — symlink resolves outside root, rejected. Same same.
 
 The `--memory-dir` is **not** required to be inside `--project` — it's server-side config, not user-driven file access.
 
