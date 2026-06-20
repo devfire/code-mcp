@@ -73,6 +73,18 @@ impl Default for GrepOptions {
     }
 }
 
+impl super::common::WalkerConfig for GrepOptions {
+    fn include_hidden(&self) -> bool {
+        self.include_hidden
+    }
+    fn respect_gitignore(&self) -> bool {
+        self.respect_gitignore
+    }
+    fn follow_symlinks(&self) -> bool {
+        self.follow_symlinks
+    }
+}
+
 /// Configuration for the `find` tool.
 #[derive(Clone, Copy)]
 pub struct FindOptions {
@@ -95,6 +107,18 @@ impl Default for FindOptions {
             respect_gitignore: true,
             match_basename: true,
         }
+    }
+}
+
+impl super::common::WalkerConfig for FindOptions {
+    fn include_hidden(&self) -> bool {
+        self.include_hidden
+    }
+    fn respect_gitignore(&self) -> bool {
+        self.respect_gitignore
+    }
+    fn follow_symlinks(&self) -> bool {
+        false // find does not expose follow_symlinks
     }
 }
 

@@ -1,10 +1,10 @@
 //! The `find` tool: locate files by regex over a parallel `ignore` walker.
 
-use super::common::record_first;
+use super::common::{build_parallel_walker, record_first};
 use super::options::FindOptions;
 use super::response::ToolResponse;
 use crate::error::AppError;
-use ignore::{WalkBuilder, WalkState};
+use ignore::WalkState;
 use regex::Regex;
 use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -24,12 +24,7 @@ pub fn find(directory: &str, pattern: &str, opts: FindOptions) -> Result<ToolRes
     let entry_errors = Arc::new(AtomicUsize::new(0));
     let first_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
-    let walker = WalkBuilder::new(directory)
-        .hidden(!opts.include_hidden)
-        .git_ignore(opts.respect_gitignore)
-        .git_global(opts.respect_gitignore)
-        .git_exclude(opts.respect_gitignore)
-        .build_parallel();
+    let walker = build_parallel_walker(directory, &opts);
 
     let (tx, rx) = channel::<String>();
     let match_basename = opts.match_basename;

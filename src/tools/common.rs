@@ -1,11 +1,20 @@
 //! Shared helpers for the walker-based tools: parallel walker construction,
 //! extension filtering, error capture, and byte-capped channel draining.
 
-use super::options::GrepOptions;
 use ignore::WalkBuilder;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::mpsc::Receiver;
+
+/// Trait for option structs that can configure a parallel directory walker.
+///
+/// Both [`super::options::GrepOptions`] and [`super::options::FindOptions`]
+/// implement this so [`build_parallel_walker`] is reusable across tools.
+pub(crate) trait WalkerConfig {
+    fn include_hidden(&self) -> bool;
+    fn respect_gitignore(&self) -> bool;
+    fn follow_symlinks(&self) -> bool;
+}
 
 /// Record the first error message into `slot`, ignoring later ones.
 pub(crate) fn record_first(slot: &Mutex<Option<String>>, msg: String) {
@@ -16,14 +25,17 @@ pub(crate) fn record_first(slot: &Mutex<Option<String>>, msg: String) {
     }
 }
 
-/// Build a parallel walker from the shared walker options in `GrepOptions`.
-pub(crate) fn build_parallel_walker(directory: &str, opts: &GrepOptions) -> ignore::WalkParallel {
+/// Build a parallel walker from any option struct implementing [`WalkerConfig`].
+pub(crate) fn build_parallel_walker(
+    directory: &str,
+    opts: &impl WalkerConfig,
+) -> ignore::WalkParallel {
     WalkBuilder::new(directory)
-        .hidden(!opts.include_hidden)
-        .git_ignore(opts.respect_gitignore)
-        .git_global(opts.respect_gitignore)
-        .git_exclude(opts.respect_gitignore)
-        .follow_links(opts.follow_symlinks)
+        .hidden(!opts.include_hidden())
+        .git_ignore(opts.respect_gitignore())
+        .git_global(opts.respect_gitignore())
+        .git_exclude(opts.respect_gitignore())
+        .follow_links(opts.follow_symlinks())
         .build_parallel()
 }
 
