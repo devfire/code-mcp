@@ -4,7 +4,6 @@
 use super::options::GrepOptions;
 use ignore::WalkBuilder;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::Mutex;
 
@@ -42,22 +41,7 @@ pub(crate) fn extension_matches(path: &Path, extensions: &[String]) -> bool {
         .is_some_and(|e| extensions.iter().any(|w| w == e))
 }
 
-/// Collect shared error state into the final `ToolResponse` metadata fields.
-pub(crate) fn error_metadata(
-    entry_errors: &AtomicUsize,
-    search_errors: &AtomicUsize,
-    first_entry_err: &Mutex<Option<String>>,
-    first_search_err: &Mutex<Option<String>>,
-) -> (usize, usize, Option<String>) {
-    let entry_err_n = entry_errors.load(Ordering::Relaxed);
-    let search_err_n = search_errors.load(Ordering::Relaxed);
-    let first_error = first_entry_err
-        .lock()
-        .ok()
-        .and_then(|g| g.clone())
-        .or_else(|| first_search_err.lock().ok().and_then(|g| g.clone()));
-    (entry_err_n, search_err_n, first_error)
-}
+
 
 /// Drain string chunks from `rx` into a single output buffer, enforcing the
 /// authoritative `max_bytes` cap. When the cap is hit the final chunk is cut on
