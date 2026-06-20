@@ -25,14 +25,62 @@ Re-uses ripgrep crates just like ripgrep itself.
 Download the latest release from the [Releases page](https://github.com/devfire/code-mcp/releases).
 
 ### Docker (GHCR)
-```bash
-docker pull ghcr.io/devfire/code-mcp:latest
-docker run -p 8080:8080 -v /path/to/repo:/project:ro ghcr.io/devfire/code-mcp
+
+The included `Dockerfile` uses a multi-stage build with `cargo-chef` for optimal layer caching. The final image is based on `debian:bookworm-slim` (~80 MB) and contains only the stripped binary and `git` (needed by the `ignore` crate for `.gitignore` traversal).
+
+```sh
+# Build
+docker build -t code-mcp .
 ```
+
+```sh
+# Run with defaults (bind 0.0.0.0:8080, project /project)
+docker run -p 8080:8080 -v /path/to/repo:/project:ro code-mcp
+```
+
+```sh
+# Override any flag — all CLI args are supported natively via ENTRYPOINT
+docker run -p 9090:9090 \
+  -v /path/to/repo:/src:ro \
+  -v /path/to/memories:/memories:ro \
+  code-mcp \
+  --bind 0.0.0.0:9090 \
+  --project /src \
+  --memory-dir /memories \
+  --max-sessions 128 \
+  --initialize-rate-per-min 20 \
+  --session-idle-timeout-secs 3600
+```
+
+```sh
+# With debug logging
+docker run -p 8080:8080 -e RUST_LOG=debug,rmcp=info \
+  -v /path/to/repo:/project:ro code-mcp
+```
+
+The `ENTRYPOINT` is the binary itself, so any arguments after the image name replace the default `CMD` and go directly to clap. 
+
+Pass `--help` to see all options:
+
+```sh
+docker run --rm code-mcp --help
+```
+
+Flags:
+
+- `--bind <addr:port>` — default `0.0.0.0:8080`.
+- `--project <path>` — **required**. Every path the tools touch is canonicalized and required to lie within this directory; anything outside is rejected with `invalid_params`. Symlinks in input paths are resolved before the check, so `cat /proj/link-to-etc-passwd` is rejected because its canonical form is `/etc/passwd`. The server refuses to start without it.
+- `--memory-dir <path>` — optional. If set, enables the `memories` tool and reads `<path>/instructions.md` (if present) into the `InitializeResult.instructions` payload sent to the model on connect.
+- `--max-sessions <N>` — default `64`. Hard cap on concurrent stateful sessions in the rmcp `LocalSessionManager`. New initialize POSTs are rejected with `503 Service Unavailable` + `Retry-After: 5` once the cap is met. Existing-session traffic (any POST carrying `Mcp-Session-Id`) passes through untouched.
+- `--initialize-rate-per-min <R>` — default `12`. Per-peer cap on **new** initialize requests, expressed as a per-minute token bucket (capacity = `R`, refilling continuously over 60 s). When exhausted, new initializes from that peer return `429 Too Many Requests` + `Retry-After: <secs>`. A misconfigured client that reconnects in a tight loop gets throttled here instead of pinning unbounded session state. Default `12`/min ≈ one fresh session every 5 s sustained — well above any healthy reconnect rate.
+- `--trust-forwarded-for` — default `false`. When set, the gate uses the rightmost entry of `X-Forwarded-For` as the peer IP for rate-limiting. This assumes a single trusted proxy hop (e.g. AWS ALB) that appends the real client IP; entries to the left of the last hop are client-supplied and forgeable. Only enable when the server sits behind a reverse proxy you control.
+- `--session-idle-timeout-secs <N>` — default `1800` (30 min). Idle timeout for stateful sessions. A background reaper task closes any session whose last observed request is older than this, so abandoned clients (process killed, network gone, no DELETE sent) don't pin slots against `--max-sessions` indefinitely. The cap defends against bursts; the reaper handles long-lived zombies.
+- `--session-sweep-interval-secs <N>` — default `60`. How often the reaper sweeps for idle sessions.
 
 Multi-arch images (`linux/amd64`, `linux/arm64`) are published automatically on every release.
 
 ### From source
+
 ```bash
 cargo install --git https://github.com/devfire/code-mcp.git
 ```
@@ -129,51 +177,6 @@ Use `offset` to page through large files: if the response indicates truncation, 
 cargo build --release
 ./target/release/code-mcp --bind 0.0.0.0:8080 --project ./my/repo
 ```
-
-### Docker
-
-The included `Dockerfile` uses a multi-stage build with `cargo-chef` for optimal layer caching. The final image is based on `debian:bookworm-slim` (~80 MB) and contains only the stripped binary and `git` (needed by the `ignore` crate for `.gitignore` traversal).
-
-```sh
-# Build
-docker build -t code-mcp .
-
-# Run with defaults (bind 0.0.0.0:8080, project /project)
-docker run -p 8080:8080 -v /path/to/repo:/project:ro code-mcp
-
-# Override any flag — all CLI args are supported natively via ENTRYPOINT
-docker run -p 9090:9090 \
-  -v /path/to/repo:/src:ro \
-  -v /path/to/memories:/memories:ro \
-  code-mcp \
-  --bind 0.0.0.0:9090 \
-  --project /src \
-  --memory-dir /memories \
-  --max-sessions 128 \
-  --initialize-rate-per-min 20 \
-  --session-idle-timeout-secs 3600
-
-# With debug logging
-docker run -p 8080:8080 -e RUST_LOG=debug,rmcp=info \
-  -v /path/to/repo:/project:ro code-mcp
-```
-
-The `ENTRYPOINT` is the binary itself, so any arguments after the image name replace the default `CMD` and go directly to clap. Pass `--help` to see all options:
-
-```sh
-docker run --rm code-mcp --help
-```
-
-Flags:
-
-- `--bind <addr:port>` — default `0.0.0.0:8080`.
-- `--project <path>` — **required**. Every path the tools touch is canonicalized and required to lie within this directory; anything outside is rejected with `invalid_params`. Symlinks in input paths are resolved before the check, so `cat /proj/link-to-etc-passwd` is rejected because its canonical form is `/etc/passwd`. The server refuses to start without it.
-- `--memory-dir <path>` — optional. If set, enables the `memories` tool and reads `<path>/instructions.md` (if present) into the `InitializeResult.instructions` payload sent to the model on connect.
-- `--max-sessions <N>` — default `64`. Hard cap on concurrent stateful sessions in the rmcp `LocalSessionManager`. New initialize POSTs are rejected with `503 Service Unavailable` + `Retry-After: 5` once the cap is met. Existing-session traffic (any POST carrying `Mcp-Session-Id`) passes through untouched.
-- `--initialize-rate-per-min <R>` — default `12`. Per-peer cap on **new** initialize requests, expressed as a per-minute token bucket (capacity = `R`, refilling continuously over 60 s). When exhausted, new initializes from that peer return `429 Too Many Requests` + `Retry-After: <secs>`. A misconfigured client that reconnects in a tight loop gets throttled here instead of pinning unbounded session state. Default `12`/min ≈ one fresh session every 5 s sustained — well above any healthy reconnect rate.
-- `--trust-forwarded-for` — default `false`. When set, the gate uses the rightmost entry of `X-Forwarded-For` as the peer IP for rate-limiting. This assumes a single trusted proxy hop (e.g. AWS ALB) that appends the real client IP; entries to the left of the last hop are client-supplied and forgeable. Only enable when the server sits behind a reverse proxy you control.
-- `--session-idle-timeout-secs <N>` — default `1800` (30 min). Idle timeout for stateful sessions. A background reaper task closes any session whose last observed request is older than this, so abandoned clients (process killed, network gone, no DELETE sent) don't pin slots against `--max-sessions` indefinitely. The cap defends against bursts; the reaper handles long-lived zombies.
-- `--session-sweep-interval-secs <N>` — default `60`. How often the reaper sweeps for idle sessions.
 
 ### Scope semantics
 
