@@ -203,6 +203,22 @@ The `--memory-dir` is **not** required to be inside `--project` — it's server-
 
 The `instructions.md` file is read once at startup. The other files are read on demand by the `memories` and `cat` tools, so editing them does not require a restart.
 
+### Bootstrapping memories
+
+code-mcp is a read-only, LLM-free tool server: it can *serve* a memory directory but it cannot *create* one. Generating memories needs read access to the code, write access to the memory dir, and a model — and all three only coexist **on the box where the files live**, not in a remote client connecting over the network.
+
+So bootstrapping is a separate, co-located step: run a local coding agent against the repo to produce the `MEMORY.md` index + per-area files, then point `--memory-dir` at the output. The included script does this:
+
+```sh
+# Uses `claude -p` by default; the agent reads/writes the local filesystem directly.
+scripts/generate-memories.sh ./my/repo ./memories
+
+# Any stdin-driven agent with local fs access works:
+AGENT="codex exec" scripts/generate-memories.sh /srv/monorepo /srv/memories
+```
+
+The script feeds the agent a prompt that builds a **functional-area mental model** — the major subsystems, their entry points, how they talk, and the non-obvious gotchas — rather than transcribing code the client can already `grep`. The goal is to orient a cold client so it doesn't burn calls rediscovering structure every session. Review the generated files before serving them, then start the server with `--memory-dir ./memories`.
+
 Logging via `RUST_LOG`:
 
 ```sh
