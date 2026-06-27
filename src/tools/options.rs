@@ -1,31 +1,20 @@
 //! Configuration types for the `grep` and `find` tools.
 
 use super::{DEFAULT_MAX_BYTES, DEFAULT_MAX_RESULTS};
-use crate::error::AppError;
+use rmcp::schemars::{self, JsonSchema};
+use serde::{Deserialize, Serialize};
 
 /// Controls what the `grep` tool emits for each match.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum OutputMode {
     /// Emit the file path on the first match, then skip the rest of that file.
+    #[default]
     FilesWithMatches,
     /// Emit matching lines with line numbers (the original/default behaviour).
     Content,
     /// Emit per-file match tallies as `path: N` lines.
     Count,
-}
-
-impl OutputMode {
-    /// Parse a string into an `OutputMode`, returning an error for unknown values.
-    pub fn from_str_lossy(s: &str) -> Result<Self, AppError> {
-        match s {
-            "files_with_matches" => Ok(Self::FilesWithMatches),
-            "content" => Ok(Self::Content),
-            "count" => Ok(Self::Count),
-            other => Err(AppError::InvalidRequest(format!(
-                "unknown output_mode '{other}'; expected one of: files_with_matches, content, count"
-            ))),
-        }
-    }
 }
 
 /// Configuration for the `grep` tool. The boolean fields are independent
@@ -130,12 +119,13 @@ mod tests {
 
     #[test]
     fn grep_output_mode_rejects_unknown() -> TestResult {
-        match OutputMode::from_str_lossy("bogus") {
-            Err(AppError::InvalidRequest(msg)) => {
-                assert!(msg.contains("bogus"), "got: {}", msg);
-                Ok(())
-            }
-            other => Err(format!("expected InvalidRequest, got {:?}", other).into()),
-        }
+        let result: Result<OutputMode, _> = serde_json::from_str(r#""bogus""#);
+        assert!(result.is_err(), "expected deserialization error for unknown output_mode");
+        Ok(())
+    }
+
+    #[test]
+    fn grep_output_mode_default_is_files_with_matches() {
+        assert_eq!(OutputMode::default(), OutputMode::FilesWithMatches);
     }
 }

@@ -37,16 +37,7 @@ pub fn cat(
         skip_buf.clear();
         let n = reader.read_line(&mut skip_buf)?;
         if n == 0 {
-            // EOF before reaching the offset — nothing to return.
-            return Ok(ToolResponse {
-                content: String::new(),
-                truncated: false,
-                truncation_reason: None,
-                match_count: None,
-                entry_error_count: None,
-                search_error_count: None,
-                first_error: None,
-            });
+            return Ok(ToolResponse::text(String::new()));
         }
     }
 

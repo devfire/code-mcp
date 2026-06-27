@@ -10,7 +10,7 @@ use crate::args::{CatArgs, FindArgs, GrepArgs, MemoriesArgs, StringOrVec};
 use crate::error::{ToolResult, join_error, tool_error};
 use crate::memory::load_memory;
 use crate::scope::Scope;
-use crate::tools::{self, OutputMode};
+use crate::tools;
 
 /// The MCP server handler. Owns the tool router, the optional memory dir,
 /// the extra instructions loaded at startup, and the filesystem [`Scope`].
@@ -55,10 +55,6 @@ impl CodeMcpServer {
             Ok(d) => d,
             Err(e) => return Ok(tool_error(e)),
         };
-        let output_mode = match OutputMode::from_str_lossy(&args.output_mode) {
-            Ok(m) => m,
-            Err(e) => return Ok(tool_error(e)),
-        };
         let res = tokio::task::spawn_blocking(move || {
             let opts = tools::GrepOptions {
                 before_context: args.before_context,
@@ -73,7 +69,7 @@ impl CodeMcpServer {
                     .map(StringOrVec::into_vec)
                     .unwrap_or_default(),
                 max_bytes: args.max_bytes,
-                output_mode,
+                output_mode: args.output_mode,
             };
             tools::grep(&directory, &args.pattern, opts)
         })

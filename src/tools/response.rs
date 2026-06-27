@@ -51,7 +51,6 @@ impl ToolResponse {
     /// prefer structured output still get the actual content.
     pub fn into_call_tool_result(self) -> CallToolResult {
         let structured = json!({
-            "content": self.content,
             "truncated": self.truncated,
             "truncation_reason": self.truncation_reason,
             "match_count": self.match_count,

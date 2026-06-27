@@ -1,14 +1,15 @@
+use crate::tools::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, DEFAULT_MAX_RESULTS, OutputMode};
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
-const fn default_max_results() -> usize {
-    100
+fn default_max_results() -> usize {
+    DEFAULT_MAX_RESULTS
 }
-const fn default_max_bytes() -> usize {
-    5 * 1024 * 1024
+fn default_max_bytes() -> usize {
+    DEFAULT_MAX_BYTES
 }
-const fn default_max_lines() -> usize {
-    2000
+fn default_max_lines() -> usize {
+    DEFAULT_MAX_LINES
 }
 const fn default_true() -> bool {
     true
@@ -39,10 +40,6 @@ impl StringOrVec {
             StringOrVec::Many(v) => v,
         }
     }
-}
-
-fn default_output_mode() -> String {
-    "files_with_matches".to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -92,11 +89,11 @@ pub struct GrepArgs {
         description = "Hard cap on total response size in bytes (default ~5 MiB). Truncates with a marker."
     )]
     pub max_bytes: usize,
-    #[serde(default = "default_output_mode")]
+    #[serde(default)]
     #[schemars(
         description = "Output mode: 'files_with_matches' (default — list file paths only), 'content' (matching lines with line numbers), 'count' (per-file match tallies as path: N)."
     )]
-    pub output_mode: String,
+    pub output_mode: OutputMode,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
