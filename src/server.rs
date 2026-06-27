@@ -121,12 +121,7 @@ impl CodeMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         let res = tokio::task::spawn_blocking(move || {
-            tools::cat(
-                &file_path,
-                args.offset,
-                args.max_lines,
-                args.max_bytes,
-            )
+            tools::cat(&file_path, args.offset, args.max_lines, args.max_bytes)
         })
         .await
         .map_err(join_error)?;
