@@ -1,12 +1,13 @@
 //! The `find` tool: locate files by regex over a parallel `ignore` walker.
 
-use super::common::record_first;
+use super::common::{build_parallel_walker, record_first};
 use super::options::FindOptions;
 use super::response::ToolResponse;
 use crate::error::AppError;
-use ignore::{WalkBuilder, WalkState};
+use ignore::WalkState;
 use regex::Regex;
 use std::mem;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
@@ -17,23 +18,14 @@ use std::sync::{Arc, Mutex};
 /// Uses a parallel `ignore` walker (gitignore-aware) and an `AtomicUsize`
 /// counter for exact `max_results` capping. Walker entry errors are tallied
 /// and surfaced in the returned [`ToolResponse`] metadata.
-pub fn find(
-    directory: &str,
-    pattern: &str,
-    opts: FindOptions,
-) -> Result<ToolResponse, AppError> {
+pub fn find(directory: &Path, pattern: &str, opts: FindOptions) -> Result<ToolResponse, AppError> {
     let re = Regex::new(pattern)?;
     let max_results = opts.max_results;
     let count = Arc::new(AtomicUsize::new(0));
     let entry_errors = Arc::new(AtomicUsize::new(0));
     let first_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
-    let walker = WalkBuilder::new(directory)
-        .hidden(!opts.include_hidden)
-        .git_ignore(opts.respect_gitignore)
-        .git_global(opts.respect_gitignore)
-        .git_exclude(opts.respect_gitignore)
-        .build_parallel();
+    let walker = build_parallel_walker(directory, &opts);
 
     let (tx, rx) = channel::<String>();
     let match_basename = opts.match_basename;
@@ -62,6 +54,10 @@ pub fn find(
                     return WalkState::Continue;
                 }
             };
+
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                return WalkState::Continue;
+            }
 
             let path = entry.path();
             let hay: std::borrow::Cow<'_, str> = if match_basename {
@@ -99,10 +95,7 @@ pub fn find(
     }
 
     let entry_err_n = entry_errors.load(Ordering::Relaxed);
-    let first_error = first_error
-        .lock()
-        .ok()
-        .and_then(|g| g.clone());
+    let first_error = first_error.lock().ok().and_then(|g| g.clone());
 
     let match_count = count.load(Ordering::Relaxed);
 
@@ -120,7 +113,7 @@ pub fn find(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::testutil::{path_str, write_file, TestResult};
+    use crate::tools::testutil::{TestResult, write_file};
 
     #[test]
     fn find_match_basename_and_full_path() -> TestResult {
@@ -130,7 +123,7 @@ mod tests {
         write_file(root, "sub/bar.rs", "")?;
 
         let basename = find(
-            path_str(root)?,
+            root,
             "^foo",
             FindOptions {
                 match_basename: true,
@@ -138,11 +131,19 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert!(basename.content.contains("foo.rs"), "got {}", basename.content);
-        assert!(!basename.content.contains("bar.rs"), "got {}", basename.content);
+        assert!(
+            basename.content.contains("foo.rs"),
+            "got {}",
+            basename.content
+        );
+        assert!(
+            !basename.content.contains("bar.rs"),
+            "got {}",
+            basename.content
+        );
 
         let fullpath_anchored = find(
-            path_str(root)?,
+            root,
             "^foo",
             FindOptions {
                 match_basename: false,
@@ -158,7 +159,7 @@ mod tests {
         );
 
         let fullpath_ok = find(
-            path_str(root)?,
+            root,
             r"sub.*foo\.rs$",
             FindOptions {
                 match_basename: false,
@@ -166,7 +167,11 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert!(fullpath_ok.content.contains("foo.rs"), "got {}", fullpath_ok.content);
+        assert!(
+            fullpath_ok.content.contains("foo.rs"),
+            "got {}",
+            fullpath_ok.content
+        );
         Ok(())
     }
 }

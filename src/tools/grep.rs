@@ -1,8 +1,6 @@
 //! The `grep` tool: regex search across files via parallel directory traversal.
 
-use super::common::{
-    build_parallel_walker, drain_capped, extension_matches, record_first,
-};
+use super::common::{build_parallel_walker, drain_capped, extension_matches, record_first};
 use super::options::{GrepOptions, OutputMode};
 use super::response::ToolResponse;
 use super::sinks::{CountSink, FileMatchSink, MatchSink};
@@ -14,7 +12,7 @@ use std::collections::HashMap;
 use std::mem;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 
 // ─── Shared error tracking ──────────────────────────────────────────────────
@@ -77,11 +75,7 @@ impl ErrorState {
 /// Walker entry errors and per-file search errors are tallied and surfaced in
 /// the returned [`ToolResponse`] metadata rather than aborting the search.
 #[allow(clippy::needless_pass_by_value)]
-pub fn grep(
-    directory: &str,
-    pattern: &str,
-    opts: GrepOptions,
-) -> Result<ToolResponse, AppError> {
+pub fn grep(directory: &Path, pattern: &str, opts: GrepOptions) -> Result<ToolResponse, AppError> {
     match opts.output_mode {
         OutputMode::Content => grep_streamed(directory, pattern, &opts, StreamMode::Content),
         OutputMode::FilesWithMatches => {
@@ -103,7 +97,7 @@ enum StreamMode {
 /// Unified implementation for `content` and `files_with_matches` modes.
 /// Both use the mpsc pipeline with early-quit on `max_results`.
 fn grep_streamed(
-    directory: &str,
+    directory: &Path,
     pattern: &str,
     opts: &GrepOptions,
     mode: StreamMode,
@@ -159,9 +153,7 @@ fn grep_streamed(
                         max_results,
                         max_bytes,
                     };
-                    if let Err(err) =
-                        local_searcher.search_path(&local_matcher, path, &mut sink)
-                    {
+                    if let Err(err) = local_searcher.search_path(&local_matcher, path, &mut sink) {
                         errors.record_search_error(path, &err);
                     }
                     flush(&tx, &mut buf);
@@ -172,9 +164,7 @@ fn grep_streamed(
                         max_results,
                         matched_this_file: false,
                     };
-                    if let Err(err) =
-                        local_searcher.search_path(&local_matcher, path, &mut sink)
-                    {
+                    if let Err(err) = local_searcher.search_path(&local_matcher, path, &mut sink) {
                         errors.record_search_error(path, &err);
                     }
                     if sink.matched_this_file {
@@ -225,7 +215,7 @@ fn flush(tx: &Sender<String>, buf: &mut String) {
 /// `count` mode — tally matches per file, output as `path: N` lines.
 /// Does not use a channel; collects into a shared HashMap instead.
 fn grep_count(
-    directory: &str,
+    directory: &Path,
     pattern: &str,
     opts: &GrepOptions,
 ) -> Result<ToolResponse, AppError> {
@@ -236,6 +226,7 @@ fn grep_count(
     let errors = ErrorState::new();
     let extensions = opts.file_extensions.clone();
     let file_counts: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+    let file_count = Arc::new(AtomicUsize::new(0));
     let walker = build_parallel_walker(directory, opts);
 
     walker.run(|| {
@@ -244,8 +235,13 @@ fn grep_count(
         let local_matcher = matcher.clone();
         let extensions = extensions.clone();
         let file_counts = Arc::clone(&file_counts);
+        let file_count = Arc::clone(&file_count);
 
         Box::new(move |result| {
+            if file_count.load(Ordering::Relaxed) >= max_results {
+                return WalkState::Quit;
+            }
+
             let entry = match result {
                 Ok(e) => e,
                 Err(err) => {
@@ -268,6 +264,7 @@ fn grep_count(
             }
 
             if sink.count > 0 {
+                file_count.fetch_add(1, Ordering::Relaxed);
                 let key = path.to_string_lossy().into_owned();
                 let mut map = file_counts
                     .lock()
@@ -275,7 +272,11 @@ fn grep_count(
                 *map.entry(key).or_insert(0) += sink.count;
             }
 
-            WalkState::Continue
+            if file_count.load(Ordering::Relaxed) >= max_results {
+                WalkState::Quit
+            } else {
+                WalkState::Continue
+            }
         })
     });
 
@@ -328,10 +329,7 @@ fn build_matcher(pattern: &str, opts: &GrepOptions) -> Result<RegexMatcher, AppE
         .build(pattern)?)
 }
 
-fn build_searcher(
-    opts: &GrepOptions,
-    mode: &StreamMode,
-) -> grep_searcher::Searcher {
+fn build_searcher(opts: &GrepOptions, mode: &StreamMode) -> grep_searcher::Searcher {
     let mut builder = SearcherBuilder::new();
     builder.binary_detection(BinaryDetection::quit(b'\x00'));
 
@@ -353,7 +351,7 @@ fn build_searcher(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::testutil::{path_str, write_file, TestResult};
+    use crate::tools::testutil::{TestResult, write_file};
     use std::fs;
 
     #[test]
@@ -368,7 +366,7 @@ mod tests {
             respect_gitignore: false,
             ..Default::default()
         };
-        let res = grep(path_str(root)?, "needle", opts)?;
+        let res = grep(root, "needle", opts)?;
         assert!(
             res.match_count.unwrap() <= 15,
             "expected match_count <= 15, got {:?}",
@@ -385,7 +383,7 @@ mod tests {
         write_file(root, "a.txt", "Hello World\n")?;
 
         let case_sensitive = grep(
-            path_str(root)?,
+            root,
             "hello",
             GrepOptions {
                 output_mode: OutputMode::Content,
@@ -393,10 +391,15 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert_eq!(case_sensitive.match_count, Some(0), "got {}", case_sensitive.content);
+        assert_eq!(
+            case_sensitive.match_count,
+            Some(0),
+            "got {}",
+            case_sensitive.content
+        );
 
         let case_insensitive = grep(
-            path_str(root)?,
+            root,
             "hello",
             GrepOptions {
                 case_insensitive: true,
@@ -421,7 +424,7 @@ mod tests {
         write_file(root, "b.txt", "fn target() {}\n")?;
 
         let res = grep(
-            path_str(root)?,
+            root,
             "target",
             GrepOptions {
                 file_extensions: vec!["rs".to_string()],
@@ -444,25 +447,37 @@ mod tests {
         write_file(root, "open.txt", "needle\n")?;
 
         let respected = grep(
-            path_str(root)?,
+            root,
             "needle",
             GrepOptions {
                 respect_gitignore: true,
                 ..Default::default()
             },
         )?;
-        assert!(!respected.content.contains("secrets.txt"), "got {}", respected.content);
-        assert!(respected.content.contains("open.txt"), "got {}", respected.content);
+        assert!(
+            !respected.content.contains("secrets.txt"),
+            "got {}",
+            respected.content
+        );
+        assert!(
+            respected.content.contains("open.txt"),
+            "got {}",
+            respected.content
+        );
 
         let ignored = grep(
-            path_str(root)?,
+            root,
             "needle",
             GrepOptions {
                 respect_gitignore: false,
                 ..Default::default()
             },
         )?;
-        assert!(ignored.content.contains("secrets.txt"), "got {}", ignored.content);
+        assert!(
+            ignored.content.contains("secrets.txt"),
+            "got {}",
+            ignored.content
+        );
         Ok(())
     }
 
@@ -475,7 +490,7 @@ mod tests {
         write_file(root, "c.rs", "needle here\n")?;
 
         let res = grep(
-            path_str(root)?,
+            root,
             "needle",
             GrepOptions {
                 output_mode: OutputMode::FilesWithMatches,
@@ -486,7 +501,11 @@ mod tests {
         assert!(res.content.contains("a.txt"), "got {}", res.content);
         assert!(!res.content.contains("b.txt"), "got {}", res.content);
         assert!(res.content.contains("c.rs"), "got {}", res.content);
-        assert!(!res.content.contains("1:"), "should not have line numbers: {}", res.content);
+        assert!(
+            !res.content.contains("1:"),
+            "should not have line numbers: {}",
+            res.content
+        );
         assert_eq!(res.match_count, Some(2), "got {:?}", res.match_count);
         Ok(())
     }
@@ -500,7 +519,7 @@ mod tests {
         }
 
         let res = grep(
-            path_str(root)?,
+            root,
             "needle",
             GrepOptions {
                 output_mode: OutputMode::FilesWithMatches,
@@ -526,7 +545,7 @@ mod tests {
         write_file(root, "c.rs", "needle here\n")?;
 
         let res = grep(
-            path_str(root)?,
+            root,
             "needle",
             GrepOptions {
                 output_mode: OutputMode::Count,

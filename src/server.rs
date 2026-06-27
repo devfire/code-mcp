@@ -2,17 +2,15 @@ use std::fmt::Write;
 use std::path::PathBuf;
 
 use rmcp::{
-    ServerHandler,
-    handler::server::wrapper::Parameters,
-    model::CallToolResult,
-    tool, tool_handler, tool_router,
+    ServerHandler, handler::server::wrapper::Parameters, model::CallToolResult, tool, tool_handler,
+    tool_router,
 };
 
 use crate::args::{CatArgs, FindArgs, GrepArgs, MemoriesArgs, StringOrVec};
-use crate::error::{ToolResult, join_error, tool_error};
+use crate::error::{AppError, ToolResult, join_error, tool_error};
 use crate::memory::load_memory;
 use crate::scope::Scope;
-use crate::tools::{self, OutputMode};
+use crate::tools;
 
 /// The MCP server handler. Owns the tool router, the optional memory dir,
 /// the extra instructions loaded at startup, and the filesystem [`Scope`].
@@ -52,16 +50,9 @@ impl CodeMcpServer {
     #[tool(
         description = "Regex search across files (parallel, gitignore-aware). output_mode: 'files_with_matches' (default — list matching file paths), 'content' (matching lines with line numbers), 'count' (per-file match tallies). Other options: case_insensitive, file_extensions, before/after_context, include_hidden, follow_symlinks, max_results, max_bytes."
     )]
-    async fn grep(
-        &self,
-        Parameters(args): Parameters<GrepArgs>,
-    ) -> ToolResult<CallToolResult> {
+    async fn grep(&self, Parameters(args): Parameters<GrepArgs>) -> ToolResult<CallToolResult> {
         let directory = match self.scope.check(&args.directory) {
             Ok(d) => d,
-            Err(e) => return Ok(tool_error(e)),
-        };
-        let output_mode = match OutputMode::from_str_lossy(&args.output_mode) {
-            Ok(m) => m,
             Err(e) => return Ok(tool_error(e)),
         };
         let res = tokio::task::spawn_blocking(move || {
@@ -78,9 +69,9 @@ impl CodeMcpServer {
                     .map(StringOrVec::into_vec)
                     .unwrap_or_default(),
                 max_bytes: args.max_bytes,
-                output_mode,
+                output_mode: args.output_mode,
             };
-            tools::grep(&directory.to_string_lossy(), &args.pattern, opts)
+            tools::grep(&directory, &args.pattern, opts)
         })
         .await
         .map_err(join_error)?;
@@ -94,10 +85,7 @@ impl CodeMcpServer {
     #[tool(
         description = "Find files by regex (matches basename by default; set match_basename=false to match full path). Options: include_hidden, respect_gitignore, max_results."
     )]
-    async fn find(
-        &self,
-        Parameters(args): Parameters<FindArgs>,
-    ) -> ToolResult<CallToolResult> {
+    async fn find(&self, Parameters(args): Parameters<FindArgs>) -> ToolResult<CallToolResult> {
         let directory = match self.scope.check(&args.directory) {
             Ok(d) => d,
             Err(e) => return Ok(tool_error(e)),
@@ -109,7 +97,7 @@ impl CodeMcpServer {
                 respect_gitignore: args.respect_gitignore,
                 match_basename: args.match_basename,
             };
-            tools::find(&directory.to_string_lossy(), &args.pattern, opts)
+            tools::find(&directory, &args.pattern, opts)
         })
         .await
         .map_err(join_error)?;
@@ -129,12 +117,7 @@ impl CodeMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         let res = tokio::task::spawn_blocking(move || {
-            tools::cat(
-                &file_path.to_string_lossy(),
-                args.offset,
-                args.max_lines,
-                args.max_bytes,
-            )
+            tools::cat(&file_path, args.offset, args.max_lines, args.max_bytes)
         })
         .await
         .map_err(join_error)?;
@@ -154,16 +137,9 @@ impl CodeMcpServer {
     ) -> ToolResult<CallToolResult> {
         let dir = match self.memory_dir.clone() {
             Some(d) => d,
-            None => {
-                return Ok(CallToolResult {
-                    content: vec![rmcp::model::Content::text(
-                        "memory dir not configured; start server with --memory-dir <path>",
-                    )],
-                    structured_content: None,
-                    is_error: Some(true),
-                    meta: None,
-                });
-            }
+            None => return Ok(tool_error(AppError::InvalidRequest(
+                "memory dir not configured; start server with --memory-dir <path>".into(),
+            ))),
         };
 
         let res = tokio::task::spawn_blocking(move || load_memory(&dir, args.name.as_deref()))
@@ -171,18 +147,7 @@ impl CodeMcpServer {
             .map_err(join_error)?;
 
         match res {
-            Ok(content) => {
-                let resp = tools::ToolResponse {
-                    content,
-                    truncated: false,
-                    truncation_reason: None,
-                    match_count: None,
-                    entry_error_count: None,
-                    search_error_count: None,
-                    first_error: None,
-                };
-                Ok(resp.into_call_tool_result())
-            }
+            Ok(r) => Ok(r.into_call_tool_result()),
             Err(e) => Ok(tool_error(e)),
         }
     }
@@ -191,9 +156,7 @@ impl CodeMcpServer {
 #[tool_handler]
 impl ServerHandler for CodeMcpServer {
     fn get_info(&self) -> rmcp::model::InitializeResult {
-        let mut instructions = String::from(
-            "code-mcp: filesystem search and read tools.\n\n",
-        );
+        let mut instructions = String::from("code-mcp: filesystem search and read tools.\n\n");
         let _ = write!(
             instructions,
             "All paths are scoped to the project root: {}. \

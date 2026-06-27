@@ -71,15 +71,11 @@ impl From<AppError> for ErrorData {
             | AppError::GrepRegex(_)
             | AppError::InvalidRequest(_)
             | AppError::NotFound(_)
-            | AppError::OutOfScope(_) => ErrorData::invalid_params(
-                "invalid_params",
-                Some(json!({"error": err.to_string()})),
-            ),
+            | AppError::OutOfScope(_) => {
+                ErrorData::invalid_params("invalid_params", Some(json!({"error": err.to_string()})))
+            }
             AppError::Io(_) | AppError::Ignore(_) | AppError::Internal(_) | AppError::Axum(_) => {
-                ErrorData::internal_error(
-                    "internal_error",
-                    Some(json!({"error": err.to_string()})),
-                )
+                ErrorData::internal_error("internal_error", Some(json!({"error": err.to_string()})))
             }
         }
     }

@@ -27,7 +27,6 @@ pub use response::ToolResponse;
 
 pub(crate) const DEFAULT_MAX_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
 pub(crate) const DEFAULT_MAX_RESULTS: usize = 100;
-#[cfg(test)]
 pub(crate) const DEFAULT_MAX_LINES: usize = 2000;
 
 /// Shared test helpers used across the per-tool test modules.
@@ -47,9 +46,5 @@ pub(crate) mod testutil {
         let mut f = fs::File::create(path)?;
         f.write_all(contents.as_bytes())?;
         Ok(())
-    }
-
-    pub(crate) fn path_str(p: &Path) -> Result<&str, Box<dyn std::error::Error>> {
-        p.to_str().ok_or_else(|| "non-utf8 path".into())
     }
 }

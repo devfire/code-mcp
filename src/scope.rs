@@ -36,9 +36,9 @@ impl Scope {
     /// rejected.
     pub fn check<P: AsRef<Path>>(&self, input: P) -> Result<PathBuf, AppError> {
         let input = input.as_ref();
-        let canon = input.canonicalize().map_err(|e| {
-            AppError::NotFound(format!("{}: {}", input.display(), e))
-        })?;
+        let canon = input
+            .canonicalize()
+            .map_err(|e| AppError::NotFound(format!("{}: {}", input.display(), e)))?;
         if !canon.starts_with(&self.root) {
             return Err(AppError::OutOfScope(format!(
                 "{} is outside project root {}",
