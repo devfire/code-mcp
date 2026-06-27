@@ -7,7 +7,7 @@ use rmcp::{
 };
 
 use crate::args::{CatArgs, FindArgs, GrepArgs, MemoriesArgs, StringOrVec};
-use crate::error::{ToolResult, join_error, tool_error};
+use crate::error::{AppError, ToolResult, join_error, tool_error};
 use crate::memory::load_memory;
 use crate::scope::Scope;
 use crate::tools;
@@ -137,16 +137,9 @@ impl CodeMcpServer {
     ) -> ToolResult<CallToolResult> {
         let dir = match self.memory_dir.clone() {
             Some(d) => d,
-            None => {
-                return Ok(CallToolResult {
-                    content: vec![rmcp::model::Content::text(
-                        "memory dir not configured; start server with --memory-dir <path>",
-                    )],
-                    structured_content: None,
-                    is_error: Some(true),
-                    meta: None,
-                });
-            }
+            None => return Ok(tool_error(AppError::InvalidRequest(
+                "memory dir not configured; start server with --memory-dir <path>".into(),
+            ))),
         };
 
         let res = tokio::task::spawn_blocking(move || load_memory(&dir, args.name.as_deref()))

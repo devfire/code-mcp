@@ -36,8 +36,10 @@ pub fn load_memory(dir: &Path, name: Option<&str>) -> Result<ToolResponse, AppEr
 
     // No name: prefer MEMORY.md, otherwise list *.md files.
     let index = dir.join("MEMORY.md");
-    if index.is_file() {
-        return Ok(ToolResponse::text(std::fs::read_to_string(&index)?));
+    match std::fs::read_to_string(&index) {
+        Ok(content) => return Ok(ToolResponse::text(content)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(AppError::Io(e)),
     }
 
     let mut listing = String::from("# Memory dir contents\n\n");
