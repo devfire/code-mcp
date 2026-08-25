@@ -4,6 +4,21 @@ use rmcp::model::CallToolResult;
 use serde::Serialize;
 use serde_json::json;
 
+/// Why a tool response was truncated. Serialized `snake_case`, so the wire
+/// contract (`"byte_cap"` / `"line_cap"` / `"max_results"`) is unchanged from
+/// the previous freeform strings — but a typo'd or forgotten variant is now a
+/// compile error instead of a silent client-side mismatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TruncationReason {
+    /// Total response size hit `max_bytes`.
+    ByteCap,
+    /// Line count hit `max_lines` (`cat` only).
+    LineCap,
+    /// Match/file count hit `max_results` (`grep` count mode).
+    MaxResults,
+}
+
 /// Structured metadata returned alongside the text content of every tool call.
 ///
 /// Serialized as the `structured_content` field of an MCP `CallToolResult`, so
@@ -16,8 +31,9 @@ pub struct ToolResponse {
     pub content: String,
     /// Whether the output was truncated due to a size cap.
     pub truncated: bool,
-    /// If truncated, the reason (e.g. "`byte_cap`", "`line_cap`").
-    pub truncation_reason: Option<String>,
+    /// If `truncated`, why. Set together with `truncated` by construction:
+    /// every producer sets both or neither.
+    pub truncation_reason: Option<TruncationReason>,
     /// Number of matches found (grep / find).
     pub match_count: Option<usize>,
     /// Number of walker entry errors encountered.

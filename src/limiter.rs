@@ -1,7 +1,18 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::num::NonZeroU32;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use thiserror::Error;
+
+/// Returned by [`PeerLimiter::new`] when `capacity` or `refill_per_sec` is
+/// zero, negative, or NaN. `try_consume` divides by `refill_per_sec` and
+/// feeds the quotient to `Duration::from_secs_f64`, which panics on
+/// non-finite input — this error makes that state unconstructible instead
+/// of merely `debug_assert`-ed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("capacity and refill_per_sec must be positive and finite")]
+pub struct InvalidRate;
 
 /// Per-peer token-bucket limiter. Each peer (keyed by `IpAddr`) gets a
 /// bucket that refills continuously toward `capacity` at `refill_per_sec`.
@@ -22,20 +33,27 @@ struct Bucket {
 }
 
 impl PeerLimiter {
-    pub fn new(capacity: f64, refill_per_sec: f64, evict_threshold: usize) -> Self {
-        debug_assert!(capacity > 0.0 && refill_per_sec > 0.0);
-        Self {
+    pub fn new(
+        capacity: f64,
+        refill_per_sec: f64,
+        evict_threshold: usize,
+    ) -> Result<Self, InvalidRate> {
+        // NaN fails both comparisons, so it lands here too.
+        if !(capacity > 0.0 && refill_per_sec > 0.0) {
+            return Err(InvalidRate);
+        }
+        Ok(Self {
             capacity,
             refill_per_sec,
             buckets: Mutex::new(HashMap::new()),
             evict_threshold,
-        }
+        })
     }
 
     /// Convenience: a per-minute rate (capacity = `rate`, refill = `rate`/60s).
-    pub fn per_minute(rate: u32) -> Self {
-        let cap = f64::from(rate.max(1));
-        Self::new(cap, cap / 60.0, 4096)
+    pub fn per_minute(rate: NonZeroU32) -> Self {
+        let cap = f64::from(rate.get());
+        Self::new(cap, cap / 60.0, 4096).expect("derived from a NonZeroU32 rate")
     }
 
     /// Try to consume one token. Returns the time until the next token would
@@ -91,7 +109,7 @@ mod tests {
 
     #[test]
     fn allows_within_capacity() {
-        let l = PeerLimiter::new(3.0, 0.001, 1024); // refill effectively zero
+        let l = PeerLimiter::new(3.0, 0.001, 1024).unwrap(); // refill effectively zero
         for _ in 0..3 {
             assert!(l.try_consume(ip(1)).is_ok());
         }
@@ -99,7 +117,7 @@ mod tests {
 
     #[test]
     fn blocks_after_exhaustion() {
-        let l = PeerLimiter::new(2.0, 0.001, 1024);
+        let l = PeerLimiter::new(2.0, 0.001, 1024).unwrap();
         l.try_consume(ip(1)).unwrap();
         l.try_consume(ip(1)).unwrap();
         let err = l
@@ -110,16 +128,25 @@ mod tests {
 
     #[test]
     fn separate_ips_get_separate_buckets() {
-        let l = PeerLimiter::new(1.0, 0.001, 1024);
+        let l = PeerLimiter::new(1.0, 0.001, 1024).unwrap();
         assert!(l.try_consume(ip(1)).is_ok());
         assert!(l.try_consume(ip(2)).is_ok());
         assert!(l.try_consume(ip(1)).is_err());
     }
 
     #[test]
+    fn new_rejects_non_positive_rates() {
+        assert!(PeerLimiter::new(0.0, 1.0, 8).is_err());
+        assert!(PeerLimiter::new(1.0, 0.0, 8).is_err());
+        assert!(PeerLimiter::new(-1.0, 1.0, 8).is_err());
+        assert!(PeerLimiter::new(1.0, f64::NAN, 8).is_err());
+        assert!(PeerLimiter::new(1.0, 1.0, 8).is_ok());
+    }
+
+    #[test]
     fn refills_over_time() {
         // 10 tokens/sec → one token per 100ms.
-        let l = PeerLimiter::new(1.0, 10.0, 1024);
+        let l = PeerLimiter::new(1.0, 10.0, 1024).unwrap();
         l.try_consume(ip(1)).unwrap();
         assert!(l.try_consume(ip(1)).is_err());
         std::thread::sleep(Duration::from_millis(150));
@@ -130,7 +157,7 @@ mod tests {
     fn evicts_stale_entries_when_threshold_exceeded() {
         // Tiny threshold + fast refill so the prior entry is "stale" by the
         // time we hit the threshold.
-        let l = PeerLimiter::new(1.0, 1000.0, 4);
+        let l = PeerLimiter::new(1.0, 1000.0, 4).unwrap();
         for n in 0..4 {
             l.try_consume(ip(n)).unwrap();
         }

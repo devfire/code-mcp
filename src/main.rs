@@ -64,7 +64,7 @@ use crate::cli::Args;
 use crate::gate::{GateCtx, gate};
 use crate::limiter::PeerLimiter;
 use crate::scope::Scope;
-use crate::server::CodeMcpServer;
+use crate::server::{CodeMcpServer, MemoryConfig};
 
 use crate::error::AppError;
 
@@ -79,29 +79,34 @@ async fn main() -> Result<(), AppError> {
 
     let args = Args::parse();
 
-    // If a memory dir is configured, load <dir>/instructions.md once at startup.
-    // It's appended to the InitializeResult.instructions payload.
-    let extra_instructions = if let Some(dir) = args.memory_dir.as_ref() {
-        let path = dir.join("instructions.md");
-        match tokio::fs::read_to_string(&path).await {
-            Ok(s) => {
-                tracing::info!(path = %path.display(), "loaded extra instructions");
-                Some(s)
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => {
-                tracing::warn!(path = %path.display(), error = %e, "could not read instructions.md");
-                None
+    // If a memory dir is configured, load <dir>/instructions.md once at
+    // startup. It's appended to the InitializeResult.instructions payload,
+    // so the dir and its extra instructions travel together in one type.
+    let memory = match args.memory_dir.as_ref() {
+        Some(dir) => {
+            let path = dir.join("instructions.md");
+            let extra = match tokio::fs::read_to_string(&path).await {
+                Ok(s) => {
+                    tracing::info!(path = %path.display(), "loaded extra instructions");
+                    Some(s)
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), error = %e, "could not read instructions.md");
+                    None
+                }
+            };
+            MemoryConfig::Enabled {
+                dir: dir.clone(),
+                extra,
             }
         }
-    } else {
-        None
+        None => MemoryConfig::Disabled,
     };
 
     let scope = Scope::new(args.project.clone())?;
     tracing::info!(root = %scope.root().display(), "project scope active");
 
-    let memory_dir = args.memory_dir.clone();
     let cancel = CancellationToken::new();
     let session_manager = Arc::new(LocalSessionManager::default());
     let sessions_for_gate = session_manager.clone();
@@ -118,13 +123,7 @@ async fn main() -> Result<(), AppError> {
         ..Default::default()
     };
     let service = StreamableHttpService::new(
-        move || {
-            Ok(CodeMcpServer::new(
-                memory_dir.clone(),
-                extra_instructions.clone(),
-                scope.clone(),
-            ))
-        },
+        move || Ok(CodeMcpServer::new(memory.clone(), scope.clone())),
         session_manager,
         config,
     );
@@ -138,7 +137,7 @@ async fn main() -> Result<(), AppError> {
     });
     tracing::info!(
         max_sessions = args.max_sessions,
-        initialize_rate_per_min = args.initialize_rate_per_min,
+        initialize_rate_per_min = args.initialize_rate_per_min.get(),
         trust_forwarded_for = args.trust_forwarded_for,
         session_idle_timeout_secs = args.session_idle_timeout_secs,
         session_sweep_interval_secs = args.session_sweep_interval_secs,

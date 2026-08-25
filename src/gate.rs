@@ -117,6 +117,12 @@ mod tests {
     use axum::Router;
     use axum::routing::any;
     use std::net::Ipv4Addr;
+    use std::num::NonZeroU32;
+
+    fn nz(n: u32) -> NonZeroU32 {
+        NonZeroU32::new(n).unwrap()
+    }
+
     use tower::ServiceExt;
 
     fn dummy_addr() -> SocketAddr {
@@ -148,7 +154,7 @@ mod tests {
         let ctx = Arc::new(GateCtx {
             sessions: Arc::new(LocalSessionManager::default()),
             max_sessions: 0, // would block POSTs
-            limiter: PeerLimiter::per_minute(1),
+            limiter: PeerLimiter::per_minute(nz(1)),
             trust_forwarded_for: false,
             activity: Arc::new(ActivityTracker::new()),
         });
@@ -166,7 +172,7 @@ mod tests {
         let ctx = Arc::new(GateCtx {
             sessions: Arc::new(LocalSessionManager::default()),
             max_sessions: 0,
-            limiter: PeerLimiter::per_minute(1),
+            limiter: PeerLimiter::per_minute(nz(1)),
             trust_forwarded_for: false,
             activity: Arc::new(ActivityTracker::new()),
         });
@@ -183,7 +189,7 @@ mod tests {
         let ctx = Arc::new(GateCtx {
             sessions: Arc::new(LocalSessionManager::default()),
             max_sessions: 0,
-            limiter: PeerLimiter::per_minute(100),
+            limiter: PeerLimiter::per_minute(nz(100)),
             trust_forwarded_for: false,
             activity: Arc::new(ActivityTracker::new()),
         });
@@ -201,7 +207,7 @@ mod tests {
         let ctx = Arc::new(GateCtx {
             sessions: Arc::new(LocalSessionManager::default()),
             max_sessions: 1000,
-            limiter: PeerLimiter::new(2.0, 0.001, 1024), // ~no refill
+            limiter: PeerLimiter::new(2.0, 0.001, 1024).unwrap(), // ~no refill
             trust_forwarded_for: false,
             activity: Arc::new(ActivityTracker::new()),
         });

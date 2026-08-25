@@ -1,10 +1,11 @@
 //! The `cat` tool: read file contents with line/byte pagination.
 
-use super::response::ToolResponse;
+use super::response::{ToolResponse, TruncationReason};
 use crate::error::AppError;
+use crate::scope::ScopedPath;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::num::NonZeroUsize;
 
 /// Read file contents with pagination.
 ///
@@ -17,18 +18,20 @@ use std::path::Path;
 /// Returns [`AppError::InvalidRequest`] if the target is missing or not a
 /// regular file.
 pub fn cat(
-    file_path: &Path,
+    file_path: &ScopedPath,
     offset: usize,
-    max_lines: usize,
-    max_bytes: usize,
+    max_lines: NonZeroUsize,
+    max_bytes: NonZeroUsize,
 ) -> Result<ToolResponse, AppError> {
-    if !file_path.is_file() {
+    let (max_lines, max_bytes) = (max_lines.get(), max_bytes.get());
+    if !file_path.as_ref().is_file() {
         return Err(AppError::InvalidRequest(
             "Target is not a file or does not exist".to_string(),
         ));
     }
 
-    let file = File::open(file_path)?;
+    let file = File::open(file_path.as_ref())?;
+
     let mut reader = BufReader::new(file);
 
     // Skip `offset` lines.
@@ -44,7 +47,7 @@ pub fn cat(
     let mut output = String::new();
     let mut line_count = 0usize;
     let mut truncated = false;
-    let mut truncation_reason: Option<String> = None;
+    let mut truncation_reason: Option<TruncationReason> = None;
     let mut buf = String::new();
     loop {
         buf.clear();
@@ -57,7 +60,7 @@ pub fn cat(
                 output.push('\n');
             }
             truncated = true;
-            truncation_reason = Some("line_cap".to_string());
+            truncation_reason = Some(TruncationReason::LineCap);
             break;
         }
         if output.len() + buf.len() > max_bytes {
@@ -71,7 +74,7 @@ pub fn cat(
                 output.push('\n');
             }
             truncated = true;
-            truncation_reason = Some("byte_cap".to_string());
+            truncation_reason = Some(TruncationReason::ByteCap);
             break;
         }
         output.push_str(&buf);
@@ -92,7 +95,7 @@ pub fn cat(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::testutil::TestResult;
+    use crate::tools::testutil::{TestResult, nz, scoped_in};
     use crate::tools::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES};
     use std::fs;
 
@@ -102,16 +105,16 @@ mod tests {
         let path = td.path().join("a.txt");
         fs::write(&path, "L1\nL2\nL3\nL4\nL5\nL6\nL7\n")?;
 
-        let res = cat(&path, 2, 3, DEFAULT_MAX_BYTES)?;
+        let res = cat(&scoped_in(td.path(), &path), 2, nz(3), DEFAULT_MAX_BYTES)?;
         assert!(
             res.content.starts_with("L3\nL4\nL5\n"),
             "got {:?}",
             res.content
         );
         assert!(res.truncated, "expected truncated=true");
-        assert_eq!(res.truncation_reason, Some("line_cap".to_string()));
+        assert_eq!(res.truncation_reason, Some(TruncationReason::LineCap));
 
-        let res = cat(&path, 4, 3, DEFAULT_MAX_BYTES)?;
+        let res = cat(&scoped_in(td.path(), &path), 4, nz(3), DEFAULT_MAX_BYTES)?;
         assert_eq!(res.content, "L5\nL6\nL7\n", "got {:?}", res.content);
         assert!(!res.truncated);
         Ok(())
@@ -124,9 +127,9 @@ mod tests {
         let body = "abcdefghijklmnopqrstuvwxyz\n".repeat(20);
         fs::write(&path, &body)?;
 
-        let res = cat(&path, 0, DEFAULT_MAX_LINES, 50)?;
+        let res = cat(&scoped_in(td.path(), &path), 0, DEFAULT_MAX_LINES, nz(50))?;
         assert!(res.truncated, "expected truncated=true, got {:?}", res);
-        assert_eq!(res.truncation_reason, Some("byte_cap".to_string()));
+        assert_eq!(res.truncation_reason, Some(TruncationReason::ByteCap));
         assert!(
             res.content.len() < body.len(),
             "expected truncation, got len {}",
@@ -139,7 +142,7 @@ mod tests {
     fn cat_errors_when_path_is_directory() -> TestResult {
         let td = tempfile::TempDir::new()?;
         match cat(
-            td.path(),
+            &scoped_in(td.path(), td.path()),
             0,
             DEFAULT_MAX_LINES,
             DEFAULT_MAX_BYTES,

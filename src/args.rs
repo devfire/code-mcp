@@ -1,14 +1,15 @@
 use crate::tools::{DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, DEFAULT_MAX_RESULTS, OutputMode};
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroUsize;
 
-fn default_max_results() -> usize {
+fn default_max_results() -> NonZeroUsize {
     DEFAULT_MAX_RESULTS
 }
-fn default_max_bytes() -> usize {
+fn default_max_bytes() -> NonZeroUsize {
     DEFAULT_MAX_BYTES
 }
-fn default_max_lines() -> usize {
+fn default_max_lines() -> NonZeroUsize {
     DEFAULT_MAX_LINES
 }
 const fn default_true() -> bool {
@@ -64,7 +65,7 @@ pub struct GrepArgs {
     pub after_context: usize,
     #[serde(default = "default_max_results")]
     #[schemars(description = "Maximum number of results to return (default 100)")]
-    pub max_results: usize,
+    pub max_results: NonZeroUsize,
     #[serde(default)]
     #[schemars(
         description = "Case-insensitive search (default false). Equivalent to prefixing pattern with (?i)."
@@ -88,7 +89,7 @@ pub struct GrepArgs {
     #[schemars(
         description = "Hard cap on total response size in bytes (default ~5 MiB). Truncates with a marker."
     )]
-    pub max_bytes: usize,
+    pub max_bytes: NonZeroUsize,
     #[serde(default)]
     #[schemars(
         description = "Output mode: 'files_with_matches' (default — list file paths only), 'content' (matching lines with line numbers), 'count' (per-file match tallies as path: N)."
@@ -107,7 +108,7 @@ pub struct FindArgs {
     pub pattern: String,
     #[serde(default = "default_max_results")]
     #[schemars(description = "Maximum number of results to return (default 100)")]
-    pub max_results: usize,
+    pub max_results: NonZeroUsize,
     #[serde(default)]
     #[schemars(description = "Include hidden files and directories (default false)")]
     pub include_hidden: bool,
@@ -133,10 +134,10 @@ pub struct CatArgs {
     pub offset: usize,
     #[serde(default = "default_max_lines")]
     #[schemars(description = "Maximum number of lines to return (default 2000)")]
-    pub max_lines: usize,
+    pub max_lines: NonZeroUsize,
     #[serde(default = "default_max_bytes")]
     #[schemars(description = "Maximum number of bytes to return (default ~5 MiB)")]
-    pub max_bytes: usize,
+    pub max_bytes: NonZeroUsize,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

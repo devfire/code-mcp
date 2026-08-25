@@ -1,6 +1,9 @@
 use clap::Parser;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::path::PathBuf;
+
+const DEFAULT_INITIALIZE_RATE: NonZeroU32 = NonZeroU32::new(12).unwrap();
 
 /// Command-line arguments for `code-mcp`.
 ///
@@ -42,8 +45,8 @@ pub struct Args {
     /// per-minute rate (token bucket of capacity = rate, refilling over
     /// 60s). When exhausted, new initializes from that peer get 429 +
     /// Retry-After. Existing-session traffic is unaffected.
-    #[arg(long, default_value_t = 12)]
-    pub(crate) initialize_rate_per_min: u32,
+    #[arg(long, default_value_t = DEFAULT_INITIALIZE_RATE)]
+    pub(crate) initialize_rate_per_min: NonZeroU32,
 
     /// Trust the rightmost entry of `X-Forwarded-For` as the peer IP
     /// instead of the TCP socket address. Assumes a single trusted proxy

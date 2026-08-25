@@ -4,10 +4,10 @@ use super::common::{build_parallel_walker, record_first};
 use super::options::FindOptions;
 use super::response::ToolResponse;
 use crate::error::AppError;
+use crate::scope::ScopedPath;
 use ignore::WalkState;
 use regex::Regex;
 use std::mem;
-use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
@@ -18,14 +18,18 @@ use std::sync::{Arc, Mutex};
 /// Uses a parallel `ignore` walker (gitignore-aware) and an `AtomicUsize`
 /// counter for exact `max_results` capping. Walker entry errors are tallied
 /// and surfaced in the returned [`ToolResponse`] metadata.
-pub fn find(directory: &Path, pattern: &str, opts: FindOptions) -> Result<ToolResponse, AppError> {
+pub fn find(
+    directory: &ScopedPath,
+    pattern: &str,
+    opts: FindOptions,
+) -> Result<ToolResponse, AppError> {
     let re = Regex::new(pattern)?;
-    let max_results = opts.max_results;
+    let max_results = opts.max_results.get();
     let count = Arc::new(AtomicUsize::new(0));
     let entry_errors = Arc::new(AtomicUsize::new(0));
     let first_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
-    let walker = build_parallel_walker(directory, &opts);
+    let walker = build_parallel_walker(directory.as_ref(), &opts);
 
     let (tx, rx) = channel::<String>();
     let match_basename = opts.match_basename;
@@ -113,7 +117,7 @@ pub fn find(directory: &Path, pattern: &str, opts: FindOptions) -> Result<ToolRe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::testutil::{TestResult, write_file};
+    use crate::tools::testutil::{TestResult, scoped_in, write_file};
 
     #[test]
     fn find_match_basename_and_full_path() -> TestResult {
@@ -123,7 +127,7 @@ mod tests {
         write_file(root, "sub/bar.rs", "")?;
 
         let basename = find(
-            root,
+            &scoped_in(root, root),
             "^foo",
             FindOptions {
                 match_basename: true,
@@ -143,7 +147,7 @@ mod tests {
         );
 
         let fullpath_anchored = find(
-            root,
+            &scoped_in(root, root),
             "^foo",
             FindOptions {
                 match_basename: false,
@@ -159,7 +163,7 @@ mod tests {
         );
 
         let fullpath_ok = find(
-            root,
+            &scoped_in(root, root),
             r"sub.*foo\.rs$",
             FindOptions {
                 match_basename: false,

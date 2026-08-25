@@ -2,6 +2,7 @@
 //! extension filtering, error capture, and byte-capped channel draining.
 
 use ignore::WalkBuilder;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::mpsc::Receiver;
@@ -55,7 +56,8 @@ pub(crate) fn extension_matches(path: &Path, extensions: &[String]) -> bool {
 /// a UTF-8 character boundary and a trailing newline is ensured; remaining
 /// chunks are discarded. Returns the assembled output and whether the cap was
 /// hit (`true` => truncated).
-pub(crate) fn drain_capped(rx: &Receiver<String>, max_bytes: usize) -> (String, bool) {
+pub(crate) fn drain_capped(rx: &Receiver<String>, max_bytes: NonZeroUsize) -> (String, bool) {
+    let max_bytes = max_bytes.get();
     let mut output = String::new();
     let mut byte_cap_hit = false;
     while let Ok(chunk) = rx.recv() {
