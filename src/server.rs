@@ -12,8 +12,8 @@ use crate::memory::load_memory;
 use crate::scope::Scope;
 use crate::tools;
 
-/// The MCP server handler. Owns the tool router, the optional memory dir,
-/// the extra instructions loaded at startup, and the filesystem [`Scope`].
+/// The MCP server handler. Owns the tool router, the memory configuration
+/// ([`MemoryConfig`]), and the filesystem [`Scope`].
 ///
 /// Constructed once per session by the `StreamableHttpService` closure in
 /// `main` (so each session gets its own cheap `Clone` of the `Scope` and
@@ -22,24 +22,35 @@ use crate::tools;
 #[derive(Clone)]
 pub struct CodeMcpServer {
     tool_router: rmcp::handler::server::router::tool::ToolRouter<Self>,
-    memory_dir: Option<PathBuf>,
-    extra_instructions: Option<String>,
+    memory: MemoryConfig,
     scope: Scope,
 }
 
+/// Whether and how the memory subsystem is configured.
+///
+/// This replaces the old `(Option<PathBuf>, Option<String>)` pair
+/// (`memory_dir`, `extra_instructions`), which could represent the
+/// impossible state "extra instructions present but no memory dir".
+#[derive(Debug, Clone, Default)]
+pub enum MemoryConfig {
+    /// `--memory-dir` not supplied: the `memories` tool errors and no
+    /// memory instructions are advertised in `get_info`.
+    #[default]
+    Disabled,
+    /// `--memory-dir <dir>`: the `memories` tool reads from `dir`, and the
+    /// optional contents of `<dir>/instructions.md` (loaded once at
+    /// startup) are appended to the initialize payload.
+    Enabled { dir: PathBuf, extra: Option<String> },
+}
+
 impl CodeMcpServer {
-    /// Construct a new server instance. `extra_instructions` is the contents
-    /// of `<memory-dir>/instructions.md` (loaded once at startup) and is
-    /// appended to the `InitializeResult.instructions` payload.
-    pub fn new(
-        memory_dir: Option<PathBuf>,
-        extra_instructions: Option<String>,
-        scope: Scope,
-    ) -> Self {
+    /// Construct a new server instance. `memory` carries the configured
+    /// memory dir and the startup-loaded contents of
+    /// `<memory-dir>/instructions.md` (see [`MemoryConfig::Enabled`]).
+    pub fn new(memory: MemoryConfig, scope: Scope) -> Self {
         Self {
             tool_router: Self::tool_router(),
-            memory_dir,
-            extra_instructions,
+            memory,
             scope,
         }
     }
@@ -135,11 +146,13 @@ impl CodeMcpServer {
         &self,
         Parameters(args): Parameters<MemoriesArgs>,
     ) -> ToolResult<CallToolResult> {
-        let dir = match self.memory_dir.clone() {
-            Some(d) => d,
-            None => return Ok(tool_error(AppError::InvalidRequest(
-                "memory dir not configured; start server with --memory-dir <path>".into(),
-            ))),
+        let dir = match &self.memory {
+            MemoryConfig::Enabled { dir, .. } => dir.clone(),
+            MemoryConfig::Disabled => {
+                return Ok(tool_error(AppError::InvalidRequest(
+                    "memory dir not configured; start server with --memory-dir <path>".into(),
+                )));
+            }
         };
 
         let res = tokio::task::spawn_blocking(move || load_memory(&dir, args.name.as_deref()))
@@ -180,14 +193,11 @@ least one match. This is the most token-efficient mode for broad reconnaissance 
 `find` matches the basename of each path by default. Set match_basename: false to \
 match against the full path instead.
 
-`.gitignore` files are respected by default for both grep and find. \
-Set respect_gitignore: false to walk the entire tree, including ignored paths.
-
 `cat` supports an `offset` (0-based line number) for paginating long files, plus \
 optional `max_lines` and `max_bytes` caps.",
         );
 
-        if self.memory_dir.is_some() {
+        if matches!(self.memory, MemoryConfig::Enabled { .. }) {
             instructions.push_str(
                 "\n\nThis server has a memory directory configured. \
 Call the `memories` tool at the start of a session to load persisted context \
@@ -197,7 +207,10 @@ Individual memory files referenced in the index can also be read with `cat`.",
             );
         }
 
-        if let Some(extra) = &self.extra_instructions {
+        if let MemoryConfig::Enabled {
+            extra: Some(extra), ..
+        } = &self.memory
+        {
             instructions.push_str("\n\n--- project instructions ---\n\n");
             instructions.push_str(extra);
         }

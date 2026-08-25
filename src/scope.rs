@@ -30,11 +30,12 @@ impl Scope {
         &self.root
     }
 
-    /// Validate that `input` is within the scope, returning its canonical
-    /// path. Symlinks in `input` are resolved before the containment
-    /// check, so a symlink inside the project that points outside it is
-    /// rejected.
-    pub fn check<P: AsRef<Path>>(&self, input: P) -> Result<PathBuf, AppError> {
+    /// Validate that `input` is within the scope, returning a [`ScopedPath`]
+    /// — the canonical path, with the in-scope proof carried by the type so
+    /// downstream tool entry points can require it. Symlinks in `input` are
+    /// resolved before the containment check, so a symlink inside the
+    /// project that points outside it is rejected.
+    pub fn check<P: AsRef<Path>>(&self, input: P) -> Result<ScopedPath, AppError> {
         let input = input.as_ref();
         let canon = input
             .canonicalize()
@@ -46,7 +47,20 @@ impl Scope {
                 self.root.display()
             )));
         }
-        Ok(canon)
+        Ok(ScopedPath(canon))
+    }
+}
+
+/// A path proven — via [`Scope::check`] — to canonicalize inside a scope's
+/// root. The only constructor is `Scope::check`, and tool entry points take
+/// `&ScopedPath`, so a path that skipped scope validation cannot reach them:
+/// the "forgot to call `check`" bug is a compile error, not a security hole.
+#[derive(Debug, Clone)]
+pub struct ScopedPath(PathBuf);
+
+impl AsRef<Path> for ScopedPath {
+    fn as_ref(&self) -> &Path {
+        &self.0
     }
 }
 
@@ -64,7 +78,11 @@ mod tests {
         fs::write(td.path().join("a.txt"), "x")?;
         let s = Scope::new(td.path())?;
         let canon = s.check(td.path().join("a.txt"))?;
-        assert!(canon.ends_with("a.txt"), "got {}", canon.display());
+        assert!(
+            canon.as_ref().ends_with("a.txt"),
+            "got {}",
+            canon.as_ref().display()
+        );
         Ok(())
     }
 
@@ -109,10 +127,10 @@ mod tests {
             // Either way, reading /etc/passwd via traversal should not succeed.
             Err(AppError::NotFound(_)) => Ok(()),
             Ok(p) => {
-                if p.starts_with(td.path()) {
+                if p.as_ref().starts_with(td.path()) {
                     Ok(())
                 } else {
-                    Err(format!("escaped root: {}", p.display()).into())
+                    Err(format!("escaped root: {}", p.as_ref().display()).into())
                 }
             }
             other => Err(format!("unexpected: {:?}", other).into()),

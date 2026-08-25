@@ -2,9 +2,10 @@
 
 use super::common::{build_parallel_walker, drain_capped, extension_matches, record_first};
 use super::options::{GrepOptions, OutputMode};
-use super::response::ToolResponse;
+use super::response::{ToolResponse, TruncationReason};
 use super::sinks::{CountSink, FileMatchSink, MatchSink};
 use crate::error::AppError;
+use crate::scope::ScopedPath;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{BinaryDetection, SearcherBuilder};
 use ignore::WalkState;
@@ -75,7 +76,11 @@ impl ErrorState {
 /// Walker entry errors and per-file search errors are tallied and surfaced in
 /// the returned [`ToolResponse`] metadata rather than aborting the search.
 #[allow(clippy::needless_pass_by_value)]
-pub fn grep(directory: &Path, pattern: &str, opts: GrepOptions) -> Result<ToolResponse, AppError> {
+pub fn grep(
+    directory: &ScopedPath,
+    pattern: &str,
+    opts: GrepOptions,
+) -> Result<ToolResponse, AppError> {
     match opts.output_mode {
         OutputMode::Content => grep_streamed(directory, pattern, &opts, StreamMode::Content),
         OutputMode::FilesWithMatches => {
@@ -97,19 +102,19 @@ enum StreamMode {
 /// Unified implementation for `content` and `files_with_matches` modes.
 /// Both use the mpsc pipeline with early-quit on `max_results`.
 fn grep_streamed(
-    directory: &Path,
+    directory: &ScopedPath,
     pattern: &str,
     opts: &GrepOptions,
     mode: StreamMode,
 ) -> Result<ToolResponse, AppError> {
     let matcher = build_matcher(pattern, opts)?;
     let searcher_proto = build_searcher(opts, &mode);
-    let max_results = opts.max_results;
-    let max_bytes = opts.max_bytes;
+    let max_results = opts.max_results.get();
+    let max_bytes = opts.max_bytes.get();
     let errors = ErrorState::new();
     let count = Arc::new(AtomicUsize::new(0));
     let extensions = opts.file_extensions.clone();
-    let walker = build_parallel_walker(directory, opts);
+    let walker = build_parallel_walker(directory.as_ref(), opts);
     let (tx, rx) = channel::<String>();
 
     walker.run(|| {
@@ -183,7 +188,7 @@ fn grep_streamed(
 
     drop(tx);
 
-    let (output, byte_cap_hit) = drain_capped(&rx, max_bytes);
+    let (output, byte_cap_hit) = drain_capped(&rx, opts.max_bytes);
     let (entry_err_n, search_err_n, first_error) = errors.into_metadata();
     let match_count = count.load(Ordering::Relaxed);
 
@@ -191,7 +196,7 @@ fn grep_streamed(
         content: output,
         truncated: byte_cap_hit,
         truncation_reason: if byte_cap_hit {
-            Some("byte_cap".to_string())
+            Some(TruncationReason::ByteCap)
         } else {
             None
         },
@@ -215,19 +220,19 @@ fn flush(tx: &Sender<String>, buf: &mut String) {
 /// `count` mode — tally matches per file, output as `path: N` lines.
 /// Does not use a channel; collects into a shared HashMap instead.
 fn grep_count(
-    directory: &Path,
+    directory: &ScopedPath,
     pattern: &str,
     opts: &GrepOptions,
 ) -> Result<ToolResponse, AppError> {
     let matcher = build_matcher(pattern, opts)?;
     let searcher_proto = build_searcher(opts, &StreamMode::FilesWithMatches); // no context, no line numbers
-    let max_results = opts.max_results;
-    let max_bytes = opts.max_bytes;
+    let max_results = opts.max_results.get();
+    let max_bytes = opts.max_bytes.get();
     let errors = ErrorState::new();
     let extensions = opts.file_extensions.clone();
     let file_counts: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
     let file_count = Arc::new(AtomicUsize::new(0));
-    let walker = build_parallel_walker(directory, opts);
+    let walker = build_parallel_walker(directory.as_ref(), opts);
 
     walker.run(|| {
         let errors = errors.clone();
@@ -310,7 +315,7 @@ fn grep_count(
         content: output,
         truncated,
         truncation_reason: if truncated {
-            Some("max_results".to_string())
+            Some(TruncationReason::MaxResults)
         } else {
             None
         },
@@ -351,7 +356,7 @@ fn build_searcher(opts: &GrepOptions, mode: &StreamMode) -> grep_searcher::Searc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::testutil::{TestResult, write_file};
+    use crate::tools::testutil::{TestResult, nz, scoped_in, write_file};
     use std::fs;
 
     #[test]
@@ -362,11 +367,11 @@ mod tests {
             write_file(root, &format!("f{}.txt", i), "needle here\n")?;
         }
         let opts = GrepOptions {
-            max_results: 10,
+            max_results: nz(10),
             respect_gitignore: false,
             ..Default::default()
         };
-        let res = grep(root, "needle", opts)?;
+        let res = grep(&scoped_in(root, root), "needle", opts)?;
         assert!(
             res.match_count.unwrap() <= 15,
             "expected match_count <= 15, got {:?}",
@@ -383,7 +388,7 @@ mod tests {
         write_file(root, "a.txt", "Hello World\n")?;
 
         let case_sensitive = grep(
-            root,
+            &scoped_in(root, root),
             "hello",
             GrepOptions {
                 output_mode: OutputMode::Content,
@@ -399,7 +404,7 @@ mod tests {
         );
 
         let case_insensitive = grep(
-            root,
+            &scoped_in(root, root),
             "hello",
             GrepOptions {
                 case_insensitive: true,
@@ -424,7 +429,7 @@ mod tests {
         write_file(root, "b.txt", "fn target() {}\n")?;
 
         let res = grep(
-            root,
+            &scoped_in(root, root),
             "target",
             GrepOptions {
                 file_extensions: vec!["rs".to_string()],
@@ -447,7 +452,7 @@ mod tests {
         write_file(root, "open.txt", "needle\n")?;
 
         let respected = grep(
-            root,
+            &scoped_in(root, root),
             "needle",
             GrepOptions {
                 respect_gitignore: true,
@@ -466,7 +471,7 @@ mod tests {
         );
 
         let ignored = grep(
-            root,
+            &scoped_in(root, root),
             "needle",
             GrepOptions {
                 respect_gitignore: false,
@@ -490,7 +495,7 @@ mod tests {
         write_file(root, "c.rs", "needle here\n")?;
 
         let res = grep(
-            root,
+            &scoped_in(root, root),
             "needle",
             GrepOptions {
                 output_mode: OutputMode::FilesWithMatches,
@@ -519,11 +524,11 @@ mod tests {
         }
 
         let res = grep(
-            root,
+            &scoped_in(root, root),
             "needle",
             GrepOptions {
                 output_mode: OutputMode::FilesWithMatches,
-                max_results: 5,
+                max_results: nz(5),
                 respect_gitignore: false,
                 ..Default::default()
             },
@@ -545,7 +550,7 @@ mod tests {
         write_file(root, "c.rs", "needle here\n")?;
 
         let res = grep(
-            root,
+            &scoped_in(root, root),
             "needle",
             GrepOptions {
                 output_mode: OutputMode::Count,

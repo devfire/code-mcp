@@ -3,6 +3,7 @@
 use super::{DEFAULT_MAX_BYTES, DEFAULT_MAX_RESULTS};
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroUsize;
 
 /// Controls what the `grep` tool emits for each match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize, JsonSchema)]
@@ -28,7 +29,9 @@ pub struct GrepOptions {
     pub after_context: usize,
     /// Exact cap on results. For `files_with_matches`/`count` this caps the
     /// number of files; for `content` it caps the number of matching lines.
-    pub max_results: usize,
+    /// Nonzero: a zero cap is unrepresentable, so `0` is rejected at the
+    /// JSON boundary before any walking starts.
+    pub max_results: NonZeroUsize,
     /// Case-insensitive matching (equivalent to a `(?i)` prefix on the pattern).
     pub case_insensitive: bool,
     /// Include hidden files and directories in the walk.
@@ -39,8 +42,8 @@ pub struct GrepOptions {
     pub respect_gitignore: bool,
     /// Restrict search to files with these extensions (empty = all files).
     pub file_extensions: Vec<String>,
-    /// Hard cap on total response size in bytes.
-    pub max_bytes: usize,
+    /// Hard cap on total response size in bytes (nonzero).
+    pub max_bytes: NonZeroUsize,
     /// What to emit for each match (see [`OutputMode`]).
     pub output_mode: OutputMode,
 }
@@ -77,8 +80,8 @@ impl super::common::WalkerConfig for GrepOptions {
 /// Configuration for the `find` tool.
 #[derive(Clone, Copy)]
 pub struct FindOptions {
-    /// Exact cap on the number of matching paths returned.
-    pub max_results: usize,
+    /// Exact cap on the number of matching paths returned (nonzero).
+    pub max_results: NonZeroUsize,
     /// Include hidden files and directories in the walk.
     pub include_hidden: bool,
     /// Respect `.gitignore` / global / exclude gitignore rules.
@@ -120,7 +123,10 @@ mod tests {
     #[test]
     fn grep_output_mode_rejects_unknown() -> TestResult {
         let result: Result<OutputMode, _> = serde_json::from_str(r#""bogus""#);
-        assert!(result.is_err(), "expected deserialization error for unknown output_mode");
+        assert!(
+            result.is_err(),
+            "expected deserialization error for unknown output_mode"
+        );
         Ok(())
     }
 
