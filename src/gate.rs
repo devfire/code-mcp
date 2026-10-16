@@ -43,6 +43,18 @@ pub struct GateCtx {
 ///
 /// All other traffic (GET, DELETE, POSTs that carry a session id) is passed
 /// through untouched.
+///
+/// # Approximate cap under burst
+///
+/// The cap is a `len()` check-then-create sequence: two concurrent
+/// initializes can both observe `in_use < max_sessions` before either session
+/// is inserted downstream, overshooting the cap by the burst size. This is
+/// accepted as approximate (matching the pre-existing behaviour): the reaper
+/// bounds idle-session lifetime and the per-peer limiter bounds sustained
+/// creation rate, so a burst only overshoots transiently. Making it exact
+/// would require holding a semaphore across session creation and release on
+/// session close — i.e. owning the session lifecycle, which lives inside
+/// rmcp's `StreamableHttpService`, not here.
 pub async fn gate(
     State(ctx): State<Arc<GateCtx>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,

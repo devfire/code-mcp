@@ -17,6 +17,13 @@ use std::num::NonZeroUsize;
 ///
 /// Returns [`AppError::InvalidRequest`] if the target is missing or not a
 /// regular file.
+///
+/// # TOCTOU note
+///
+/// `file_path` is validated by [`crate::scope::Scope::check`] before this
+/// function opens it; a project-dir writer who swaps a symlink between the
+/// check and this `open` can redirect the read outside the scope. Accepted
+/// under the LAN trust model — see [`crate::scope::Scope::check`].
 pub fn cat(
     file_path: &ScopedPath,
     offset: usize,

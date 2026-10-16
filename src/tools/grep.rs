@@ -116,11 +116,17 @@ fn grep_streamed(
     let extensions = opts.file_extensions.clone();
     let walker = build_parallel_walker(directory.as_ref(), opts);
     let (tx, rx) = channel::<String>();
+    // Owned per-walk prefix for the per-entry scope probe below. `directory`
+    // is already canonical (via `Scope::check`), so `contains` enforces that
+    // each walked file still resolves inside the requested dir — closing the
+    // `follow_symlinks` escape where only the walk root was checked.
+    let scope_dir = directory.clone();
 
     walker.run(|| {
         let tx: Sender<String> = tx.clone();
         let count = Arc::clone(&count);
         let errors = errors.clone();
+        let scope_dir = scope_dir.clone();
         let mut local_searcher = searcher_proto.clone();
         let local_matcher = matcher.clone();
         let extensions = extensions.clone();
@@ -144,6 +150,12 @@ fn grep_streamed(
                 return WalkState::Continue;
             }
             if !extension_matches(entry.path(), &extensions) {
+                return WalkState::Continue;
+            }
+            // Per-entry scope enforcement: skip symlinks (or raced renames)
+            // that resolve outside the requested directory, even when the
+            // walker follows links. Canonicalize failure => skip.
+            if !scope_dir.contains(entry.path()) {
                 return WalkState::Continue;
             }
 
@@ -233,6 +245,7 @@ fn grep_count(
     let file_counts: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
     let file_count = Arc::new(AtomicUsize::new(0));
     let walker = build_parallel_walker(directory.as_ref(), opts);
+    let scope_dir = directory.clone();
 
     walker.run(|| {
         let errors = errors.clone();
@@ -241,6 +254,7 @@ fn grep_count(
         let extensions = extensions.clone();
         let file_counts = Arc::clone(&file_counts);
         let file_count = Arc::clone(&file_count);
+        let scope_dir = scope_dir.clone();
 
         Box::new(move |result| {
             if file_count.load(Ordering::Relaxed) >= max_results {
@@ -259,6 +273,9 @@ fn grep_count(
                 return WalkState::Continue;
             }
             if !extension_matches(entry.path(), &extensions) {
+                return WalkState::Continue;
+            }
+            if !scope_dir.contains(entry.path()) {
                 return WalkState::Continue;
             }
 
@@ -562,6 +579,76 @@ mod tests {
         assert!(!res.content.contains("b.txt"), "got {}", res.content);
         assert!(res.content.contains("c.rs: 1"), "got {}", res.content);
         assert_eq!(res.match_count, Some(4), "got {:?}", res.match_count);
+        Ok(())
+    }
+
+    #[test]
+    fn grep_skips_symlinked_file_pointing_outside_even_when_following() -> TestResult {
+        let td = tempfile::TempDir::new()?;
+        let root = td.path();
+        let outside = tempfile::TempDir::new()?;
+        fs::write(outside.path().join("secret.txt"), "needle outside\n")?;
+        write_file(root, "inside.txt", "needle inside\n")?;
+        std::os::unix::fs::symlink(outside.path().join("secret.txt"), root.join("link.txt"))?;
+
+        for mode in [
+            OutputMode::Content,
+            OutputMode::FilesWithMatches,
+            OutputMode::Count,
+        ] {
+            let res = grep(
+                &scoped_in(root, root),
+                "needle",
+                GrepOptions {
+                    output_mode: mode,
+                    follow_symlinks: true,
+                    respect_gitignore: false,
+                    ..Default::default()
+                },
+            )?;
+            assert!(
+                res.content.contains("inside.txt"),
+                "mode {mode:?}: got {}",
+                res.content
+            );
+            assert!(
+                !res.content.contains("secret.txt"),
+                "mode {mode:?}: leaked outside: {}",
+                res.content
+            );
+            assert!(
+                !res.content.contains("needle outside"),
+                "mode {mode:?}: leaked content: {}",
+                res.content
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn grep_skips_symlinked_dir_pointing_outside_when_following() -> TestResult {
+        let td = tempfile::TempDir::new()?;
+        let root = td.path();
+        let outside = tempfile::TempDir::new()?;
+        fs::write(outside.path().join("secret.txt"), "needle outside\n")?;
+        write_file(root, "inside.txt", "needle inside\n")?;
+        std::os::unix::fs::symlink(outside.path(), root.join("linkdir"))?;
+
+        let res = grep(
+            &scoped_in(root, root),
+            "needle",
+            GrepOptions {
+                follow_symlinks: true,
+                respect_gitignore: false,
+                ..Default::default()
+            },
+        )?;
+        assert!(res.content.contains("inside.txt"), "got {}", res.content);
+        assert!(
+            !res.content.contains("needle outside"),
+            "leaked: {}",
+            res.content
+        );
         Ok(())
     }
 }

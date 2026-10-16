@@ -35,6 +35,18 @@ impl Scope {
     /// downstream tool entry points can require it. Symlinks in `input` are
     /// resolved before the containment check, so a symlink inside the
     /// project that points outside it is rejected.
+    ///
+    /// # TOCTOU note
+    ///
+    /// The check canonicalizes at call time; a project-dir writer who swaps a
+    /// symlink or renames paths between this check and the later `open`/`read`
+    /// (e.g. in `cat`, or between walker enumeration and file read in
+    /// `grep`/`find`) can redirect the subsequent open outside the scope.
+    /// This is accepted under the LAN trust model (project-dir writers are
+    /// trusted; the scope guards the MCP client, not local writers). Closing
+    /// it would require `O_NOFOLLOW` + `/proc/self/fd` re-verification on
+    /// every open, which would also reject legitimate in-project symlinks
+    /// that canonicalize inside the root — so it is documented, not enforced.
     pub fn check<P: AsRef<Path>>(&self, input: P) -> Result<ScopedPath, AppError> {
         let input = input.as_ref();
         let canon = input
@@ -61,6 +73,24 @@ pub struct ScopedPath(PathBuf);
 impl AsRef<Path> for ScopedPath {
     fn as_ref(&self) -> &Path {
         &self.0
+    }
+}
+
+impl ScopedPath {
+    /// Per-entry containment probe for walker callbacks (`grep`/`find`).
+    ///
+    /// Canonicalizes `path` and requires it to lie under this scoped directory
+    /// (which is itself canonical). Returns `false` when canonicalization
+    /// fails (deleted mid-walk, dangling symlink) so callers skip the entry.
+    /// This closes the `follow_symlinks` escape where only the walk root is
+    /// checked: a symlinked dir or file inside the project that resolves
+    /// outside is skipped per entry, regardless of the walker's
+    /// `follow_links` setting.
+    pub fn contains(&self, path: &Path) -> bool {
+        match path.canonicalize() {
+            Ok(canon) => canon.starts_with(&self.0),
+            Err(_) => false,
+        }
     }
 }
 
@@ -135,6 +165,22 @@ mod tests {
             }
             other => Err(format!("unexpected: {:?}", other).into()),
         }
+    }
+
+    #[test]
+    fn scoped_path_contains_rejects_outside_symlink() -> TestResult {
+        let td = TempDir::new()?;
+        let outside = TempDir::new()?;
+        let target = outside.path().join("secret.txt");
+        fs::write(&target, "secret\n")?;
+        fs::write(td.path().join("inside.txt"), "inside\n")?;
+        let link = td.path().join("link.txt");
+        std::os::unix::fs::symlink(&target, &link)?;
+        let s = Scope::new(td.path())?;
+        let dir = s.check(td.path())?;
+        assert!(dir.contains(&td.path().join("inside.txt")));
+        assert!(!dir.contains(&link));
+        Ok(())
     }
 
     #[test]

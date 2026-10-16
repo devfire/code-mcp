@@ -33,12 +33,17 @@ pub fn find(
 
     let (tx, rx) = channel::<String>();
     let match_basename = opts.match_basename;
+    // Per-entry scope probe (see `ScopedPath::contains`): even though `find`
+    // never follows symlinks at the walker level, a symlink *file* inside
+    // the project could still resolve outside — skip it per entry.
+    let scope_dir = directory.clone();
 
     walker.run(|| {
         let tx = tx.clone();
         let count = Arc::clone(&count);
         let entry_errors = Arc::clone(&entry_errors);
         let first_error = Arc::clone(&first_error);
+        let scope_dir = scope_dir.clone();
         let re = re.clone();
         let mut buf = String::new();
 
@@ -60,6 +65,9 @@ pub fn find(
             };
 
             if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                return WalkState::Continue;
+            }
+            if !scope_dir.contains(entry.path()) {
                 return WalkState::Continue;
             }
 
@@ -175,6 +183,39 @@ mod tests {
             fullpath_ok.content.contains("foo.rs"),
             "got {}",
             fullpath_ok.content
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn find_skips_symlink_pointing_outside() -> TestResult {
+        let td = tempfile::TempDir::new()?;
+        let root = td.path();
+        let outside = tempfile::TempDir::new()?;
+        std::fs::write(outside.path().join("secret_target.txt"), "x")?;
+        write_file(root, "inside.txt", "x")?;
+        std::os::unix::fs::symlink(
+            outside.path().join("secret_target.txt"),
+            root.join("link.txt"),
+        )?;
+        let res = find(
+            &scoped_in(root, root),
+            ".*\\.txt$",
+            FindOptions {
+                respect_gitignore: false,
+                ..Default::default()
+            },
+        )?;
+        assert!(res.content.contains("inside.txt"), "got {}", res.content);
+        assert!(
+            !res.content.contains("link.txt"),
+            "symlink escape leaked: {}",
+            res.content
+        );
+        assert!(
+            !res.content.contains("secret_target"),
+            "leaked: {}",
+            res.content
         );
         Ok(())
     }
