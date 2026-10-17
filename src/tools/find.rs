@@ -3,6 +3,7 @@
 use super::common::{build_parallel_walker, record_first};
 use super::options::FindOptions;
 use super::response::ToolResponse;
+use super::sinks::claim_slot;
 use crate::error::AppError;
 use crate::scope::ScopedPath;
 use ignore::WalkState;
@@ -82,8 +83,7 @@ pub fn find(
             };
 
             if re.is_match(&hay) {
-                let prev = count.fetch_add(1, Ordering::Relaxed);
-                if prev >= max_results {
+                if !claim_slot(&count, max_results) {
                     return WalkState::Quit;
                 }
                 buf.push_str(&path.to_string_lossy());
@@ -125,7 +125,7 @@ pub fn find(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::testutil::{TestResult, scoped_in, write_file};
+    use crate::tools::testutil::{TestResult, nz, scoped_in, write_file};
 
     #[test]
     fn find_match_basename_and_full_path() -> TestResult {
@@ -217,6 +217,27 @@ mod tests {
             "leaked: {}",
             res.content
         );
+        Ok(())
+    }
+
+    #[test]
+    fn find_respects_max_results_exactly() -> TestResult {
+        let td = tempfile::TempDir::new()?;
+        let root = td.path();
+        for i in 0..20 {
+            write_file(root, &format!("f{}.txt", i), "x")?;
+        }
+        let res = find(
+            &scoped_in(root, root),
+            r"\.txt$",
+            FindOptions {
+                max_results: nz(5),
+                respect_gitignore: false,
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(res.match_count, Some(5));
+        assert_eq!(res.content.lines().count(), 5, "got {}", res.content);
         Ok(())
     }
 }

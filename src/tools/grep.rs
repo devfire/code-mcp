@@ -180,11 +180,12 @@ fn grep_streamed(
                         count: &count,
                         max_results,
                         matched_this_file: false,
+                        claimed_slot: false,
                     };
                     if let Err(err) = local_searcher.search_path(&local_matcher, path, &mut sink) {
                         errors.record_search_error(path, &err);
                     }
-                    if sink.matched_this_file {
+                    if sink.claimed_slot {
                         let _ = tx.send(format!("{}\n", path.display()));
                     }
                 }
@@ -309,13 +310,14 @@ fn grep_count(
     let mut entries: Vec<_> = counts_map.drain().collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let total_matches: usize = entries.iter().map(|(_, c)| *c).sum();
     let file_count = entries.len();
-
     let truncated = file_count > max_results;
     if truncated {
         entries.truncate(max_results);
     }
+    // Count only emitted entries, so `match_count` never includes files
+    // dropped by the cap.
+    let total_matches: usize = entries.iter().map(|(_, c)| *c).sum();
 
     let mut output = String::new();
     for (path, count) in &entries {
@@ -384,16 +386,14 @@ mod tests {
             write_file(root, &format!("f{}.txt", i), "needle here\n")?;
         }
         let opts = GrepOptions {
+            output_mode: OutputMode::Content,
             max_results: nz(10),
             respect_gitignore: false,
             ..Default::default()
         };
         let res = grep(&scoped_in(root, root), "needle", opts)?;
-        assert!(
-            res.match_count.unwrap() <= 15,
-            "expected match_count <= 15, got {:?}",
-            res.match_count
-        );
+        assert_eq!(res.match_count, Some(10));
+        assert_eq!(res.content.lines().count(), 10, "got {}", res.content);
         assert!(!res.truncated);
         Ok(())
     }
@@ -550,11 +550,31 @@ mod tests {
                 ..Default::default()
             },
         )?;
-        assert!(
-            res.match_count.unwrap() <= 7,
-            "expected match_count <= 7, got {:?}",
-            res.match_count
-        );
+        assert_eq!(res.match_count, Some(5));
+        assert_eq!(res.content.lines().count(), 5, "got {}", res.content);
+        Ok(())
+    }
+
+    #[test]
+    fn grep_count_mode_cap_counts_only_emitted_files() -> TestResult {
+        let td = tempfile::TempDir::new()?;
+        let root = td.path();
+        for i in 0..20 {
+            write_file(root, &format!("f{}.txt", i), "needle\nneedle\n")?;
+        }
+        let res = grep(
+            &scoped_in(root, root),
+            "needle",
+            GrepOptions {
+                output_mode: OutputMode::Count,
+                max_results: nz(5),
+                respect_gitignore: false,
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(res.content.lines().count(), 5, "got {}", res.content);
+        // 5 emitted files x 2 matches each; dropped files must not count.
+        assert_eq!(res.match_count, Some(10));
         Ok(())
     }
 

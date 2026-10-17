@@ -7,6 +7,30 @@ use std::fmt::Write;
 use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
+/// Atomically claim one of the `max_results` slots.
+///
+/// Returns `true` iff this call incremented `count` from below the cap, so
+/// `count` never exceeds `max_results` and equals the number of claimed
+/// (emittable) results. Racing callers that lose get `false` and MUST NOT
+/// emit.
+#[must_use = "a lost claim must not be emitted, or the cap is exceeded"]
+pub(crate) fn claim_slot(count: &AtomicUsize, max_results: usize) -> bool {
+    let mut current = count.load(Ordering::Relaxed);
+    loop {
+        if current >= max_results {
+            return false;
+        }
+        match count.compare_exchange_weak(
+            current,
+            current + 1,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return true,
+            Err(actual) => current = actual,
+        }
+    }
+}
 
 /// Sink that accumulates matches into a per-worker `String` buffer and enforces
 /// both a global match cap (via `AtomicUsize`) and a hint-level byte cap on
@@ -24,9 +48,7 @@ impl Sink for MatchSink<'_> {
     type Error = io::Error;
 
     fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, io::Error> {
-        // Increment first; if we are over the cap, undo conceptually by stopping.
-        let prev = self.count.fetch_add(1, Ordering::Relaxed);
-        if prev >= self.max_results {
+        if !claim_slot(self.count, self.max_results) {
             return Ok(false);
         }
         if self.buf.len() >= self.max_bytes {
@@ -73,6 +95,9 @@ pub(crate) struct FileMatchSink<'a> {
     pub(crate) count: &'a AtomicUsize,
     pub(crate) max_results: usize,
     pub(crate) matched_this_file: bool,
+    /// Whether `matched_this_file` claimed a slot within the cap. Only
+    /// claimed files may be emitted.
+    pub(crate) claimed_slot: bool,
 }
 
 impl Sink for FileMatchSink<'_> {
@@ -84,10 +109,7 @@ impl Sink for FileMatchSink<'_> {
             return Ok(false);
         }
         self.matched_this_file = true;
-        let prev = self.count.fetch_add(1, Ordering::Relaxed);
-        if prev >= self.max_results {
-            return Ok(false);
-        }
+        self.claimed_slot = claim_slot(self.count, self.max_results);
         // Stop searching this file — we only need the first match.
         Ok(false)
     }
