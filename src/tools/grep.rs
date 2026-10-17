@@ -204,12 +204,19 @@ fn grep_streamed(
     let (output, byte_cap_hit) = drain_capped(&rx, opts.max_bytes);
     let (entry_err_n, search_err_n, first_error) = errors.into_metadata();
     let match_count = count.load(Ordering::Relaxed);
+    // `claim_slot` keeps count <= max_results, so reaching the cap means the
+    // walk quit early — unless the true total is exactly the cap, which is
+    // indistinguishable without completing the scan. Report MaxResults in
+    // both cases (documented on `TruncationReason::MaxResults`).
+    let max_results_hit = match_count >= max_results;
 
     Ok(ToolResponse {
         content: output,
-        truncated: byte_cap_hit,
+        truncated: byte_cap_hit || max_results_hit,
         truncation_reason: if byte_cap_hit {
             Some(TruncationReason::ByteCap)
+        } else if max_results_hit {
+            Some(TruncationReason::MaxResults)
         } else {
             None
         },
@@ -310,30 +317,37 @@ fn grep_count(
     let mut entries: Vec<_> = counts_map.drain().collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let file_count = entries.len();
-    let truncated = file_count > max_results;
-    if truncated {
+    // Reaching the cap means the walk quit early — unless the true total is
+    // exactly the cap (indistinguishable without a full scan; see streamed).
+    let max_results_hit = entries.len() >= max_results;
+    if max_results_hit {
         entries.truncate(max_results);
     }
-    // Count only emitted entries, so `match_count` never includes files
-    // dropped by the cap.
-    let total_matches: usize = entries.iter().map(|(_, c)| *c).sum();
 
     let mut output = String::new();
+    let mut byte_cap_hit = false;
+    // Count only emitted entries, so `match_count` never includes files
+    // dropped by either cap.
+    let mut total_matches = 0usize;
     for (path, count) in &entries {
         let line = format!("{path}: {count}\n");
         if output.len() + line.len() > max_bytes {
+            byte_cap_hit = true;
             break;
         }
         output.push_str(&line);
+        total_matches += count;
     }
+    let truncated = byte_cap_hit || max_results_hit;
 
     let (entry_err_n, search_err_n, first_error) = errors.into_metadata();
 
     Ok(ToolResponse {
         content: output,
         truncated,
-        truncation_reason: if truncated {
+        truncation_reason: if byte_cap_hit {
+            Some(TruncationReason::ByteCap)
+        } else if truncated {
             Some(TruncationReason::MaxResults)
         } else {
             None
@@ -394,7 +408,8 @@ mod tests {
         let res = grep(&scoped_in(root, root), "needle", opts)?;
         assert_eq!(res.match_count, Some(10));
         assert_eq!(res.content.lines().count(), 10, "got {}", res.content);
-        assert!(!res.truncated);
+        assert!(res.truncated);
+        assert_eq!(res.truncation_reason, Some(TruncationReason::MaxResults));
         Ok(())
     }
 
@@ -552,6 +567,8 @@ mod tests {
         )?;
         assert_eq!(res.match_count, Some(5));
         assert_eq!(res.content.lines().count(), 5, "got {}", res.content);
+        assert!(res.truncated);
+        assert_eq!(res.truncation_reason, Some(TruncationReason::MaxResults));
         Ok(())
     }
 
@@ -575,6 +592,39 @@ mod tests {
         assert_eq!(res.content.lines().count(), 5, "got {}", res.content);
         // 5 emitted files x 2 matches each; dropped files must not count.
         assert_eq!(res.match_count, Some(10));
+        assert!(res.truncated);
+        assert_eq!(res.truncation_reason, Some(TruncationReason::MaxResults));
+        Ok(())
+    }
+
+    #[test]
+    fn grep_count_mode_byte_cap_sets_truncated_and_counts_only_emitted() -> TestResult {
+        let td = tempfile::TempDir::new()?;
+        let root = td.path();
+        for i in 0..20 {
+            write_file(root, &format!("f{:02}.txt", i), "needle\nneedle\n")?;
+        }
+        let res = grep(
+            &scoped_in(root, root),
+            "needle",
+            GrepOptions {
+                output_mode: OutputMode::Count,
+                max_bytes: nz(30),
+                respect_gitignore: false,
+                ..Default::default()
+            },
+        )?;
+        assert!(res.truncated, "got {:?}", res.truncation_reason);
+        assert_eq!(res.truncation_reason, Some(TruncationReason::ByteCap));
+        assert!(res.content.len() <= 30, "got {}", res.content.len());
+        // match_count sums only the emitted `path: N` lines (2 per file).
+        let emitted: usize = res
+            .content
+            .lines()
+            .filter_map(|l| l.rsplit(": ").next()?.parse::<usize>().ok())
+            .sum();
+        assert_eq!(res.match_count, Some(emitted));
+        assert!(emitted < 40, "byte cap must drop files, emitted={emitted}");
         Ok(())
     }
 

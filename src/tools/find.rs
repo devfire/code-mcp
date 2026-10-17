@@ -2,7 +2,7 @@
 
 use super::common::{build_parallel_walker, record_first};
 use super::options::FindOptions;
-use super::response::ToolResponse;
+use super::response::{ToolResponse, TruncationReason};
 use super::sinks::claim_slot;
 use crate::error::AppError;
 use crate::scope::ScopedPath;
@@ -110,11 +110,19 @@ pub fn find(
     let first_error = first_error.lock().ok().and_then(|g| g.clone());
 
     let match_count = count.load(Ordering::Relaxed);
+    // `claim_slot` keeps count <= max_results; reaching the cap means the
+    // walk quit early, unless the true total is exactly the cap
+    // (indistinguishable without a full scan — see `TruncationReason`).
+    let max_results_hit = match_count >= max_results;
 
     Ok(ToolResponse {
         content: output,
-        truncated: false,
-        truncation_reason: None,
+        truncated: max_results_hit,
+        truncation_reason: if max_results_hit {
+            Some(TruncationReason::MaxResults)
+        } else {
+            None
+        },
         match_count: Some(match_count),
         entry_error_count: Some(entry_err_n),
         search_error_count: Some(0),
@@ -238,6 +246,8 @@ mod tests {
         )?;
         assert_eq!(res.match_count, Some(5));
         assert_eq!(res.content.lines().count(), 5, "got {}", res.content);
+        assert!(res.truncated);
+        assert_eq!(res.truncation_reason, Some(TruncationReason::MaxResults));
         Ok(())
     }
 }

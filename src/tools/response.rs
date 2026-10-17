@@ -15,7 +15,10 @@ pub enum TruncationReason {
     ByteCap,
     /// Line count hit `max_lines` (`cat` only).
     LineCap,
-    /// Match/file count hit `max_results` (`grep` count mode).
+    /// Match/file count reached `max_results` (`grep`, `find`). Set whenever
+    /// the emitted count reaches the cap: the walk quits at the cap, so a
+    /// true total exactly equal to the cap is indistinguishable from a
+    /// larger total without completing the scan, and is also reported here.
     MaxResults,
 }
 
