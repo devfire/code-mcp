@@ -1,9 +1,11 @@
 use clap::Parser;
 use std::net::SocketAddr;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
 
 const DEFAULT_INITIALIZE_RATE: NonZeroU32 = NonZeroU32::new(12).unwrap();
+const DEFAULT_SESSION_IDLE_TIMEOUT_SECS: NonZeroU64 = NonZeroU64::new(1800).unwrap();
+const DEFAULT_SESSION_SWEEP_INTERVAL_SECS: NonZeroU64 = NonZeroU64::new(60).unwrap();
 
 /// Command-line arguments for `code-mcp`.
 ///
@@ -60,10 +62,49 @@ pub struct Args {
     /// observed request is older than this are closed by the reaper, so
     /// abandoned clients (process killed, network gone, no DELETE sent)
     /// don't pin slots against `--max-sessions` indefinitely.
-    #[arg(long, default_value_t = 1800)]
-    pub(crate) session_idle_timeout_secs: u64,
+    #[arg(long, default_value_t = DEFAULT_SESSION_IDLE_TIMEOUT_SECS)]
+    pub(crate) session_idle_timeout_secs: NonZeroU64,
 
     /// How often (seconds) the reaper sweeps for idle sessions.
-    #[arg(long, default_value_t = 60)]
-    pub(crate) session_sweep_interval_secs: u64,
+    #[arg(long, default_value_t = DEFAULT_SESSION_SWEEP_INTERVAL_SECS)]
+    pub(crate) session_sweep_interval_secs: NonZeroU64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn rejects_zero_session_sweep_interval() {
+        let err = Args::try_parse_from([
+            "code-mcp",
+            "--project",
+            "/tmp",
+            "--session-sweep-interval-secs",
+            "0",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("session-sweep-interval-secs"), "{err}");
+    }
+
+    #[test]
+    fn rejects_zero_session_idle_timeout() {
+        let err = Args::try_parse_from([
+            "code-mcp",
+            "--project",
+            "/tmp",
+            "--session-idle-timeout-secs",
+            "0",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("session-idle-timeout-secs"), "{err}");
+    }
+
+    #[test]
+    fn defaults_are_nonzero() {
+        let args = Args::try_parse_from(["code-mcp", "--project", "/tmp"]).unwrap();
+        assert_eq!(args.session_idle_timeout_secs.get(), 1800);
+        assert_eq!(args.session_sweep_interval_secs.get(), 60);
+    }
 }

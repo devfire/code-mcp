@@ -139,16 +139,16 @@ async fn main() -> Result<(), AppError> {
         max_sessions = args.max_sessions,
         initialize_rate_per_min = args.initialize_rate_per_min.get(),
         trust_forwarded_for = args.trust_forwarded_for,
-        session_idle_timeout_secs = args.session_idle_timeout_secs,
-        session_sweep_interval_secs = args.session_sweep_interval_secs,
+        session_idle_timeout_secs = args.session_idle_timeout_secs.get(),
+        session_sweep_interval_secs = args.session_sweep_interval_secs.get(),
         "gate configured"
     );
 
     tokio::spawn(reaper::reap_loop(
         sessions_for_reaper,
         activity_for_reaper,
-        Duration::from_secs(args.session_idle_timeout_secs),
-        Duration::from_secs(args.session_sweep_interval_secs),
+        Duration::from_secs(args.session_idle_timeout_secs.get()),
+        Duration::from_secs(args.session_sweep_interval_secs.get()),
         cancel.clone(),
     ));
 
