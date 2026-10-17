@@ -261,6 +261,27 @@ cargo test           # tools, scope, limiter, and gate-middleware tests
 cargo clippy --all-targets -- -D warnings
 ```
 
+## Releasing
+
+Releases are cut by pushing a tag — [cargo-dist](https://github.com/axodotdev/cargo-dist) does the rest.
+
+1. Bump `version` in `Cargo.toml` (the tag must match it exactly) and merge to `main`.
+2. `git tag vX.Y.Z && git push origin vX.Y.Z` — the tag pattern triggers two workflows:
+   - **`release.yml`** builds the 6-target matrix (`*-apple-darwin`, `*-unknown-linux-gnu`, `x86_64-unknown-linux-musl`, `x86_64-pc-windows-msvc`) and publishes a GitHub Release with per-target archives, SHA-256 checksums, and a shell installer.
+   - **`docker.yml`** builds and pushes multi-arch (`linux/amd64`, `linux/arm64`) images to `ghcr.io/devfire/code-mcp`, tagged `X.Y.Z`, `X.Y`, `X`.
+3. That's it — the release goes live with generated notes. End users install via:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/devfire/code-mcp/releases/download/vX.Y.Z/code-mcp-installer.sh | sh
+```
+
+Notes:
+
+- Prerelease: tag with a semver suffix (`v0.5.0-rc.1`) — the GitHub Release is marked prerelease automatically.
+- Every PR runs the full artifact build matrix as a release smoke test (`pr-run-mode = "upload"` in `dist-workspace.toml`); artifacts attach to the workflow run, nothing is published from a PR.
+- After changing `dist-workspace.toml`, regenerate the workflow (`dist generate-ci`) and commit both together — `dist plan` fails CI when the config and the workflow drift out of sync.
+
 ## Notes & non-goals
 
 - **No auth** — by design (LAN deployment). For path scoping, use `--project`.
