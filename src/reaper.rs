@@ -32,6 +32,11 @@ impl ActivityTracker {
     pub async fn set_for_test(&self, id: SessionId, when: Instant) {
         self.inner.write().await.insert(id, when);
     }
+
+    #[cfg(test)]
+    pub async fn contains_for_test(&self, id: &SessionId) -> bool {
+        self.inner.read().await.contains_key(id)
+    }
 }
 
 /// Periodically close any session whose last tracked activity is older

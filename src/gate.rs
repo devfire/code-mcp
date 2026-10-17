@@ -37,12 +37,13 @@ pub struct GateCtx {
 }
 
 /// axum middleware that gates **new-session** POSTs (no `Mcp-Session-Id`
-/// header). It enforces:
+/// header, or a header naming no live session). It enforces:
 ///   1. A hard cap on concurrent sessions held by the [`LocalSessionManager`].
 ///   2. A per-peer rate limit on initialize requests.
 ///
-/// All other traffic (GET, DELETE, POSTs that carry a session id) is passed
-/// through untouched.
+/// All other traffic (GET, DELETE, POSTs that carry a known session id) is passed
+/// through untouched. An unknown session id never touches the activity
+/// tracker, so forged ids cannot grow it or bypass the checks above.
 ///
 /// # Approximate cap under burst
 ///
@@ -62,8 +63,14 @@ pub async fn gate(
     next: Next,
 ) -> Response {
     if let Some(id) = session_id_from_headers(req.headers()) {
-        ctx.activity.touch(id).await;
-        return next.run(req).await;
+        // Only a live session bypasses the gate. A forged/unknown id falls
+        // through to the new-session checks below and must not create an
+        // activity-tracker entry (unbounded growth from minted ids).
+        let known = ctx.sessions.sessions.read().await.contains_key(&id);
+        if known {
+            ctx.activity.touch(id).await;
+            return next.run(req).await;
+        }
     }
     if req.method() != Method::POST {
         return next.run(req).await;
@@ -128,6 +135,7 @@ mod tests {
     use super::*;
     use axum::Router;
     use axum::routing::any;
+    use rmcp::transport::streamable_http_server::session::SessionManager;
     use std::net::Ipv4Addr;
     use std::num::NonZeroU32;
 
@@ -151,10 +159,10 @@ mod tests {
             .layer(axum::middleware::from_fn_with_state(ctx, gate))
     }
 
-    fn req(method: Method, addr: SocketAddr, with_session: bool) -> Request<Body> {
+    fn req(method: Method, addr: SocketAddr, session: Option<&str>) -> Request<Body> {
         let mut b = Request::builder().method(method).uri("/");
-        if with_session {
-            b = b.header(SESSION_ID_HEADER, "fake-session-id");
+        if let Some(id) = session {
+            b = b.header(SESSION_ID_HEADER, id);
         }
         let mut req = b.body(Body::empty()).unwrap();
         req.extensions_mut().insert(ConnectInfo(addr));
@@ -172,28 +180,98 @@ mod tests {
         });
         let app = build_app(ctx);
         let res = app
-            .oneshot(req(Method::GET, dummy_addr(), false))
+            .oneshot(req(Method::GET, dummy_addr(), None))
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
     }
 
     #[tokio::test]
-    async fn passes_through_post_with_session_id() {
-        // Session cap of 0 would normally block; the session-id header bypasses the gate.
+    async fn passes_through_post_with_known_session_id() {
+        // Session cap of 0 would normally block; a live session bypasses the gate.
+        let sessions = Arc::new(LocalSessionManager::default());
+        let (id, _transport) = sessions.create_session().await.unwrap();
+        let activity = Arc::new(ActivityTracker::new());
+        let ctx = Arc::new(GateCtx {
+            sessions,
+            max_sessions: 0,
+            limiter: PeerLimiter::per_minute(nz(1)),
+            trust_forwarded_for: false,
+            activity: activity.clone(),
+        });
+        let app = build_app(ctx);
+        let res = app
+            .oneshot(req(Method::POST, dummy_addr(), Some(&id)))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(activity.contains_for_test(&id).await);
+    }
+
+    #[tokio::test]
+    async fn rejects_post_with_forged_session_id_when_cap_reached() {
+        let activity = Arc::new(ActivityTracker::new());
+        let ctx = Arc::new(GateCtx {
+            sessions: Arc::new(LocalSessionManager::default()),
+            max_sessions: 0,
+            limiter: PeerLimiter::per_minute(nz(100)),
+            trust_forwarded_for: false,
+            activity: activity.clone(),
+        });
+        let app = build_app(ctx);
+        let forged: SessionId = Arc::from("forged-session-id");
+        let res = app
+            .oneshot(req(Method::POST, dummy_addr(), Some(&forged)))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!activity.contains_for_test(&forged).await);
+    }
+
+    #[tokio::test]
+    async fn forged_session_id_post_consumes_initialize_rate_limit() {
+        let activity = Arc::new(ActivityTracker::new());
+        let ctx = Arc::new(GateCtx {
+            sessions: Arc::new(LocalSessionManager::default()),
+            max_sessions: 1000,
+            limiter: PeerLimiter::per_minute(nz(1)),
+            trust_forwarded_for: false,
+            activity: activity.clone(),
+        });
+        let app = build_app(ctx);
+        let forged: SessionId = Arc::from("forged-session-id");
+        let res = app
+            .clone()
+            .oneshot(req(Method::POST, dummy_addr(), Some(&forged)))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let res = app
+            .oneshot(req(Method::POST, dummy_addr(), Some(&forged)))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(!activity.contains_for_test(&forged).await);
+    }
+
+    #[tokio::test]
+    async fn forged_session_id_get_passes_without_tracking() {
+        let activity = Arc::new(ActivityTracker::new());
         let ctx = Arc::new(GateCtx {
             sessions: Arc::new(LocalSessionManager::default()),
             max_sessions: 0,
             limiter: PeerLimiter::per_minute(nz(1)),
             trust_forwarded_for: false,
-            activity: Arc::new(ActivityTracker::new()),
+            activity: activity.clone(),
         });
         let app = build_app(ctx);
+        let forged: SessionId = Arc::from("forged-session-id");
         let res = app
-            .oneshot(req(Method::POST, dummy_addr(), true))
+            .oneshot(req(Method::GET, dummy_addr(), Some(&forged)))
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+        assert!(!activity.contains_for_test(&forged).await);
     }
 
     #[tokio::test]
@@ -207,7 +285,7 @@ mod tests {
         });
         let app = build_app(ctx);
         let res = app
-            .oneshot(req(Method::POST, dummy_addr(), false))
+            .oneshot(req(Method::POST, dummy_addr(), None))
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -228,14 +306,14 @@ mod tests {
         for _ in 0..2 {
             let res = app
                 .clone()
-                .oneshot(req(Method::POST, dummy_addr(), false))
+                .oneshot(req(Method::POST, dummy_addr(), None))
                 .await
                 .unwrap();
             assert_eq!(res.status(), StatusCode::OK);
         }
         let res = app
             .clone()
-            .oneshot(req(Method::POST, dummy_addr(), false))
+            .oneshot(req(Method::POST, dummy_addr(), None))
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -243,7 +321,7 @@ mod tests {
 
         // A different peer is unaffected.
         let res = app
-            .oneshot(req(Method::POST, other_addr(), false))
+            .oneshot(req(Method::POST, other_addr(), None))
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
