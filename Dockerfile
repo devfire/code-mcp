@@ -1,13 +1,12 @@
 # ============================================================================
 # Stage 1: Chef — prepare recipe for dependency caching
 # ============================================================================
-FROM rust:1.95-slim AS chef
+FROM lukemathwalker/cargo-chef:0.1.77-rust-1.95-slim-bookworm AS chef
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-RUN cargo install cargo-chef --locked
 WORKDIR /app
 
 # ============================================================================
