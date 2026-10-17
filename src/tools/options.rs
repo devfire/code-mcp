@@ -118,16 +118,13 @@ impl super::common::WalkerConfig for FindOptions {
 mod tests {
     use super::*;
 
-    type TestResult = Result<(), Box<dyn std::error::Error>>;
-
     #[test]
-    fn grep_output_mode_rejects_unknown() -> TestResult {
+    fn grep_output_mode_rejects_unknown() {
         let result: Result<OutputMode, _> = serde_json::from_str(r#""bogus""#);
         assert!(
             result.is_err(),
             "expected deserialization error for unknown output_mode"
         );
-        Ok(())
     }
 
     #[test]

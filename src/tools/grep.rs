@@ -577,7 +577,7 @@ mod tests {
         let td = tempfile::TempDir::new()?;
         let root = td.path();
         for i in 0..20 {
-            write_file(root, &format!("f{}.txt", i), "needle\nneedle\n")?;
+            write_file(root, &format!("f{i}.txt"), "needle\nneedle\n")?;
         }
         let res = grep(
             &scoped_in(root, root),
@@ -602,7 +602,7 @@ mod tests {
         let td = tempfile::TempDir::new()?;
         let root = td.path();
         for i in 0..20 {
-            write_file(root, &format!("f{:02}.txt", i), "needle\nneedle\n")?;
+            write_file(root, &format!("f{i:02}.txt"), "needle\nneedle\n")?;
         }
         let res = grep(
             &scoped_in(root, root),
